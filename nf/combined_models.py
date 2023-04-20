@@ -31,7 +31,6 @@ class COMBINED_Model(nn.Module):
     def __init__(
         self,
         priors_all,
-        # flows_Mdiff,
         Mdiff_model,
         M1_model,
         Ntot_model,
@@ -49,9 +48,6 @@ class COMBINED_Model(nn.Module):
         sep_Ntot_cond=False,
         sep_M1_cond=False,
         sep_Mdiff_cond=False,
-        train_Ntot=False,
-        train_M1=False,
-        train_Mdiff=False,
         ):
         super().__init__()
         self.priors_all = priors_all
@@ -78,9 +74,6 @@ class COMBINED_Model(nn.Module):
         self.sep_Ntot_cond = sep_Ntot_cond
         self.sep_M1_cond = sep_M1_cond
         self.sep_Mdiff_cond = sep_Mdiff_cond
-        self.train_Ntot = train_Ntot
-        self.train_M1 = train_M1
-        self.train_Mdiff = train_Mdiff
         if self.sep_Ntot_cond:
             self.cond_Ntot_layer = FCNN(nout + ninp, nout + ninp, nout + ninp)
         if self.sep_M1_cond:
@@ -89,29 +82,30 @@ class COMBINED_Model(nn.Module):
             self.cond_Mdiff_layer = FCNN(nout + ninp + 2, nout + ninp + 2, nout + ninp + 2)
 
     def forward(
-            self,
-            x_Mdiff,
-            x_M1,
-            x_Ntot,
-            cond_x=None,
-            cond_x_nsh=None,
-            mask_Mdiff_truth=None,
-            mask_M1_truth=None,
-            Nhalos_truth=None,
-            use_Ntot_samples=False,
-            use_M1_samples=False
+        self,
+        x_Mdiff,
+        x_M1,
+        x_Ntot,
+        cond_x=None,
+        cond_x_nsh=None,
+        mask_Mdiff_truth=None,
+        mask_M1_truth=None,
+        Nhalos_truth=None,
+        use_Ntot_samples=False,
+        use_M1_samples=False,
+        train_Ntot=False,
+        train_M1=False,
+        train_Mdiff=False,
         ):
         cond_out = self.conv_layers(cond_x)
-        # print(cond_out.shape, cond_x_nsh.shape)
         cond_out = torch.cat((cond_out, cond_x_nsh), dim=1)
 
         if self.sep_Ntot_cond:
             cond_out_Ntot = self.cond_Ntot_layer(cond_out)
         else:
             cond_out_Ntot = cond_out
-        # print(cond_out_Ntot.shape)
         logP_Ntot = torch.zeros(1, device='cuda')
-        if self.train_Ntot:
+        if train_Ntot:
             logP_Ntot = self.Ntot_model.forward(x_Ntot, cond_out_Ntot)
 
             if use_Ntot_samples:
@@ -143,7 +137,7 @@ class COMBINED_Model(nn.Module):
             Nhalos_truth = Nhalos_truth.to('cuda')
 
         logP_M1 = torch.zeros(1, device='cuda')
-        if self.train_M1:
+        if train_M1:
             cond_inp_M1 = torch.cat([Nhalos_truth, cond_out], dim=1)
             if self.sep_M1_cond:
                 cond_inp_M1 = self.cond_M1_layer(cond_inp_M1)
@@ -161,7 +155,7 @@ class COMBINED_Model(nn.Module):
             Nhalos_truth = x_Ntot
 
         logP_Mdiff = torch.zeros(1, device='cuda')
-        if self.train_Mdiff:
+        if train_Mdiff:
             cond_inp_Mdiff = torch.cat([Nhalos_truth, M1_truth, cond_out], dim=1)
             if self.sep_Mdiff_cond:
                 cond_inp_Mdiff = self.cond_Mdiff_layer(cond_inp_Mdiff)
@@ -185,16 +179,19 @@ class COMBINED_Model(nn.Module):
         return loss
 
     def inverse(
-            self,
-            cond_x=None,
-            cond_x_nsh=None,
-            use_truth_Nhalo=False,
-            use_truth_M1=False,
-            use_truth_Mdiff=False,
-            mask_Mdiff_truth=None,
-            mask_M1_truth=None,
-            Nhalos_truth=None,
-            M1_truth=None
+        self,
+        cond_x=None,
+        cond_x_nsh=None,
+        use_truth_Nhalo=False,
+        use_truth_M1=False,
+        use_truth_Mdiff=False,
+        mask_Mdiff_truth=None,
+        mask_M1_truth=None,
+        Nhalos_truth=None,
+        M1_truth=None,
+        train_Ntot=False,
+        train_M1=False,
+        train_Mdiff=False,
         ):
         cond_out = self.conv_layers(cond_x)
         cond_out = torch.cat((cond_out, cond_x_nsh), dim=1)
@@ -203,7 +200,7 @@ class COMBINED_Model(nn.Module):
         else:
             cond_out_Ntot = cond_out
 
-        if self.train_Ntot:
+        if train_Ntot:
             Ntot_samp_tensor = self.Ntot_model.inverse(cond_out_Ntot)
             Ntot_samp = np.maximum(np.round(Ntot_samp_tensor.cpu().detach().numpy()) - 1, 0).astype(int)
         else:
@@ -244,7 +241,7 @@ class COMBINED_Model(nn.Module):
             mask_tensor_M1_samp = mask_tensor_M1_samp.float().cuda()
 
         if use_truth_Mdiff:
-            mask_tensor_Mdiff_samp = torch.Tensor(mask_Mdiff_truth, device='cuda')
+            mask_tensor_Mdiff_samp = (mask_Mdiff_truth)
         else:
             # mask_tensor_Mdiff_samp = torch.Tensor(np.copy(mask_samp))
             mask_tensor_Mdiff_samp = torch.from_numpy(mask_samp_M_diff)
@@ -253,7 +250,7 @@ class COMBINED_Model(nn.Module):
         if use_truth_Nhalo:
             Nhalo_conditional = Nhalos_truth
         else:
-            if self.train_Ntot:
+            if train_Ntot:
                 Nhalo_conditional = torch.Tensor(np.array([Ntot_samp]).T)
                 Nhalo_conditional = Nhalo_conditional.float().cuda()
             else:
@@ -263,7 +260,7 @@ class COMBINED_Model(nn.Module):
         if self.sep_M1_cond:
             cond_inp_M1 = self.cond_M1_layer(cond_inp_M1)
 
-        if self.train_M1:
+        if train_M1:
             M1_samp, _ = self.M1_model.inverse(cond_inp_M1, mask_tensor_M1_samp)
         else:
             M1_samp = None
@@ -271,12 +268,12 @@ class COMBINED_Model(nn.Module):
         if use_truth_M1:
             M1_conditional = M1_truth
         else:
-            if self.train_M1:
+            if train_M1:
                 M1_conditional = torch.unsqueeze(M1_samp, 0).T
             else:
                 raise ValueError('Must use truth M1 if not training M1')
 
-        if self.train_Mdiff:
+        if train_Mdiff:
             cond_inp_Mdiff = torch.cat([Nhalo_conditional, M1_conditional, cond_out], dim=1)
             if self.sep_Mdiff_cond:
                 cond_inp_Mdiff = self.cond_Mdiff_layer(cond_inp_Mdiff)
