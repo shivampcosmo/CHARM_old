@@ -617,86 +617,86 @@ class NSF_Mdiff_CNNcond(nn.Module):
         return x
 
 
-class MAF_CNN_cond(nn.Module):
-    """
-    This is the model for the auto-regressive model of the lower halo masses.
-    This takes as input the environment, heavist halo mass and number of halos. 
-    It is based on simple CNNs with auto-regressive structure.
-    """
+# class MAF_CNN_cond(nn.Module):
+#     """
+#     This is the model for the auto-regressive model of the lower halo masses.
+#     This takes as input the environment, heavist halo mass and number of halos. 
+#     It is based on simple CNNs with auto-regressive structure.
+#     """
 
-    def __init__(self, dim, hidden_dim=8, base_network=FCNN, num_cond=0):
-        super().__init__()
-        self.dim = dim
-        self.layers = nn.ModuleList()
-        self.num_cond = num_cond
-        if self.num_cond == 0:
-            self.initial_param = nn.Parameter(torch.Tensor(1))
-        else:
-            self.layer_init = base_network(self.num_cond, 2, hidden_dim)
-        for i in range(1, dim):
-            self.layers += [base_network(self.num_cond + i, 2, hidden_dim)]
-        self.mu_all_forward = np.zeros(self.dim)
-        self.alpha_all_forward = np.zeros(self.dim)
-        self.mu_all_inverse = torch.zeros(self.dim)
-        self.alpha_all_inverse = torch.zeros(self.dim)
-        if self.num_cond == 0:
-            self.reset_parameters()
+#     def __init__(self, dim, hidden_dim=8, base_network=FCNN, num_cond=0):
+#         super().__init__()
+#         self.dim = dim
+#         self.layers = nn.ModuleList()
+#         self.num_cond = num_cond
+#         if self.num_cond == 0:
+#             self.initial_param = nn.Parameter(torch.Tensor(1))
+#         else:
+#             self.layer_init = base_network(self.num_cond, 2, hidden_dim)
+#         for i in range(1, dim):
+#             self.layers += [base_network(self.num_cond + i, 2, hidden_dim)]
+#         self.mu_all_forward = np.zeros(self.dim)
+#         self.alpha_all_forward = np.zeros(self.dim)
+#         self.mu_all_inverse = torch.zeros(self.dim)
+#         self.alpha_all_inverse = torch.zeros(self.dim)
+#         if self.num_cond == 0:
+#             self.reset_parameters()
 
-    def reset_parameters(self):
-        init.uniform_(self.initial_param, -math.sqrt(0.5), math.sqrt(0.5))
+#     def reset_parameters(self):
+#         init.uniform_(self.initial_param, -math.sqrt(0.5), math.sqrt(0.5))
 
-    def forward(self, x, cond_inp=None, mask=None):
-        z = torch.zeros_like(x)
-        # log_det = torch.zeros(z.shape[0])
-        log_det_all = torch.zeros_like(x)
+#     def forward(self, x, cond_inp=None, mask=None):
+#         z = torch.zeros_like(x)
+#         # log_det = torch.zeros(z.shape[0])
+#         log_det_all = torch.zeros_like(x)
 
-        for i in range(self.dim):
-            if i == 0:
-                out = self.layer_init(cond_inp)
-                mu, alpha = out[:, 0], out[:, 1]
-                # mu = -torch.exp(mu)
-                mu = (1 + nn.Tanh()(mu))
-            else:
-                out = self.layers[i - 1](torch.cat([cond_inp, x[:, :i]], dim=1))
-                mu, alpha = out[:, 0], out[:, 1]
-                # mu = -torch.exp(mu)
-                mu = (1 + nn.Tanh()(mu))
+#         for i in range(self.dim):
+#             if i == 0:
+#                 out = self.layer_init(cond_inp)
+#                 mu, alpha = out[:, 0], out[:, 1]
+#                 # mu = -torch.exp(mu)
+#                 mu = (1 + nn.Tanh()(mu))
+#             else:
+#                 out = self.layers[i - 1](torch.cat([cond_inp, x[:, :i]], dim=1))
+#                 mu, alpha = out[:, 0], out[:, 1]
+#                 # mu = -torch.exp(mu)
+#                 mu = (1 + nn.Tanh()(mu))
 
-            z[:, i] = (x[:, i] - mu) / torch.exp(alpha)
-            log_det_all[:, i] = -alpha
+#             z[:, i] = (x[:, i] - mu) / torch.exp(alpha)
+#             log_det_all[:, i] = -alpha
 
-            # try:
-            #     self.mu_all_forward[i] = mu.detach().numpy()
-            #     self.alpha_all_forward[i] = alpha.detach().numpy()
-            # except:
-            #     self.mu_all_forward[i] = mu[0].detach().numpy()
-            #     self.alpha_all_forward[i] = alpha[0].detach().numpy()
-        log_det_all_masked = log_det_all * mask
-        log_det = torch.sum(log_det_all_masked, dim=1)
-        return z, log_det
+#             # try:
+#             #     self.mu_all_forward[i] = mu.detach().numpy()
+#             #     self.alpha_all_forward[i] = alpha.detach().numpy()
+#             # except:
+#             #     self.mu_all_forward[i] = mu[0].detach().numpy()
+#             #     self.alpha_all_forward[i] = alpha[0].detach().numpy()
+#         log_det_all_masked = log_det_all * mask
+#         log_det = torch.sum(log_det_all_masked, dim=1)
+#         return z, log_det
 
-    def inverse(self, z, cond_inp=None, mask=None):
-        x = torch.zeros_like(z)
-        x = x.to('cuda')
-        z = z.to('cuda')
-        log_det_all = torch.zeros_like(z)
-        log_det_all = log_det_all.to('cuda')
-        for i in range(self.dim):
-            if i == 0:
-                out = self.layer_init(cond_inp)
-                mu, alpha = out[:, 0], out[:, 1]
-                # mu = -torch.exp(mu)
-                mu = (1 + nn.Tanh()(mu))
-            else:
-                out = self.layers[i - 1](torch.cat([cond_inp, x[:, :i]], dim=1))
-                mu, alpha = out[:, 0], out[:, 1]
-                # mu = -torch.exp(mu)
-                mu = (1 + nn.Tanh()(mu))
+#     def inverse(self, z, cond_inp=None, mask=None):
+#         x = torch.zeros_like(z)
+#         x = x.to('cuda')
+#         z = z.to('cuda')
+#         log_det_all = torch.zeros_like(z)
+#         log_det_all = log_det_all.to('cuda')
+#         for i in range(self.dim):
+#             if i == 0:
+#                 out = self.layer_init(cond_inp)
+#                 mu, alpha = out[:, 0], out[:, 1]
+#                 # mu = -torch.exp(mu)
+#                 mu = (1 + nn.Tanh()(mu))
+#             else:
+#                 out = self.layers[i - 1](torch.cat([cond_inp, x[:, :i]], dim=1))
+#                 mu, alpha = out[:, 0], out[:, 1]
+#                 # mu = -torch.exp(mu)
+#                 mu = (1 + nn.Tanh()(mu))
 
-            x[:, i] = mu + torch.exp(alpha) * z[:, i]
-            log_det_all[:, i] = alpha
+#             x[:, i] = mu + torch.exp(alpha) * z[:, i]
+#             log_det_all[:, i] = alpha
 
-        log_det_all_masked = log_det_all * mask
-        log_det = torch.sum(log_det_all_masked, dim=1)
-        x *= mask
-        return x, log_det
+#         log_det_all_masked = log_det_all * mask
+#         log_det = torch.sum(log_det_all_masked, dim=1)
+#         x *= mask
+#         return x, log_det

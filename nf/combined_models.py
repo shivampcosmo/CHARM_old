@@ -88,92 +88,94 @@ class COMBINED_Model(nn.Module):
         x_Ntot,
         cond_x=None,
         cond_x_nsh=None,
-        mask_Mdiff_truth=None,
-        mask_M1_truth=None,
-        Nhalos_truth=None,
+        mask_Mdiff_truth_all=None,
+        mask_M1_truth_all=None,
+        Nhalos_truth_all=None,
         use_Ntot_samples=False,
         use_M1_samples=False,
         train_Ntot=False,
         train_M1=False,
         train_Mdiff=False,
         ):
-        cond_out = self.conv_layers(cond_x)
-        cond_out = torch.cat((cond_out, cond_x_nsh), dim=1)
-
-        if self.sep_Ntot_cond:
-            cond_out_Ntot = self.cond_Ntot_layer(cond_out)
-        else:
-            cond_out_Ntot = cond_out
+        nbatches = cond_x.shape[0]
         logP_Ntot = torch.zeros(1, device='cuda')
-        if train_Ntot:
-            logP_Ntot = self.Ntot_model.forward(x_Ntot, cond_out_Ntot)
-
-            if use_Ntot_samples:
-                Ntot_samp = np.maximum(np.round(self.Ntot_model.inverse(cond_out_Ntot).detach().numpy()) - 1,
-                                       0).astype(int)
-                mask_samp_all = np.zeros((Ntot_samp.shape[0], Ntot_samp.shape[1], self.ndim))
-                idx = np.arange(self.ndim)[None, None, :]
-                mask_samp_all[np.arange(Ntot_samp.shape[0])[:, None, None],
-                              np.arange(Ntot_samp.shape[1])[None, :, None], idx] = (idx < Ntot_samp[..., None])
-
-                Ntot_samp_diff = Ntot_samp - 1
-                Ntot_samp_diff[Ntot_samp_diff < 0] = 0
-                mask_samp_M_diff = np.zeros((Ntot_samp.shape[0], Ntot_samp.shape[1], self.ndim - 1))
-                idx = np.arange(self.ndim - 1)[None, None, :]
-                mask_samp_M_diff[np.arange(Ntot_samp.shape[0])[:, None, None],
-                                 np.arange(Ntot_samp.shape[1])[None, :, None], idx] = (idx < Ntot_samp_diff[..., None])
-
-                mask_samp_M1 = mask_samp_all[:, :, 0]
-
-                mask_M1_truth = torch.from_numpy(mask_samp_M1).float().cuda()
-                mask_Mdiff_truth = torch.from_numpy(mask_samp_M_diff).float().cuda()
-                Nhalos_truth = torch.from_numpy(Ntot_samp).float().cuda()
-            else:
-                # Nhalos_truth = np.maximum(np.round(x_Ntot.cpu().detach().numpy()), 0).astype(int)
-                # tensor_zero = torch.Tensor(0).cuda()
-                # Nhalos_truth = torch.maximum(torch.round(x_Ntot), tensor_zero)
-                Nhalos_truth = Nhalos_truth.to('cuda')
-        else:
-            Nhalos_truth = Nhalos_truth.to('cuda')
-
         logP_M1 = torch.zeros(1, device='cuda')
-        if train_M1:
-            cond_inp_M1 = torch.cat([Nhalos_truth, cond_out], dim=1)
-            if self.sep_M1_cond:
-                cond_inp_M1 = self.cond_M1_layer(cond_inp_M1)
-
-            logP_M1 = self.M1_model.forward(x_M1, cond_inp_M1)
-            logP_M1 *= mask_M1_truth
-            if use_M1_samples:
-                M1_samp = self.M1_model.inverse(cond_inp_M1, mask_M1_truth).detach().numpy()
-                M1_samp = np.maximum(M1_samp, 0)
-                M1_truth = torch.from_numpy(M1_samp).float().cuda()
-            else:
-                M1_truth = x_M1
-        else:
-            M1_truth = x_M1
-            Nhalos_truth = x_Ntot
-
         logP_Mdiff = torch.zeros(1, device='cuda')
-        if train_Mdiff:
-            cond_inp_Mdiff = torch.cat([Nhalos_truth, M1_truth, cond_out], dim=1)
-            if self.sep_Mdiff_cond:
-                cond_inp_Mdiff = self.cond_Mdiff_layer(cond_inp_Mdiff)
-            # m, _ = x_Mdiff.shape
-            # log_det = torch.zeros(m, device='cuda')
-            # for flow in self.flows_Mdiff:
-            #     x_Mdiff, ld = flow.forward(x_Mdiff, cond_inp_Mdiff, mask_Mdiff_truth)
-            #     log_det += ld
-            # z = x_Mdiff
+        for jb in range(nbatches):
+            cond_out = self.conv_layers(cond_x[jb])
+            cond_out = torch.cat((cond_out, cond_x_nsh[jb]), dim=1)
 
-            # prior_logprob_all = torch.zeros(x_Mdiff.shape, device='cuda')
-            # for jd in range(self.ndim - 1):
-            #     prior_logprob_all[:, jd] = self.priors_all[jd].log_prob(z[:, jd])
-            # prior_logprob_masked = prior_logprob_all * mask_Mdiff_truth
-            # prior_logprob = torch.sum(prior_logprob_masked, axis=1)
-            # logP_Mdiff = (torch.mean(prior_logprob + log_det))
-            logP_Mdiff = self.Mdiff_model.forward(x_Mdiff, cond_inp_Mdiff, mask_Mdiff_truth)
-        # print(logP_Ntot.shape, logP_M1.shape, logP_Mdiff.shape)
+            if self.sep_Ntot_cond:
+                cond_out_Ntot = self.cond_Ntot_layer(cond_out)
+            else:
+                cond_out_Ntot = cond_out
+
+            if train_Ntot:
+                if jb == 0:
+                    logP_Ntot = self.Ntot_model.forward(x_Ntot[jb], cond_out_Ntot)
+                else:
+                    logP_Ntot += self.Ntot_model.forward(x_Ntot[jb], cond_out_Ntot)
+
+                if use_Ntot_samples:
+                    Ntot_samp = np.maximum(np.round(self.Ntot_model.inverse(cond_out_Ntot).detach().numpy()) - 1,
+                                           0).astype(int)
+                    mask_samp_all = np.zeros((Ntot_samp.shape[0], Ntot_samp.shape[1], self.ndim))
+                    idx = np.arange(self.ndim)[None, None, :]
+                    mask_samp_all[np.arange(Ntot_samp.shape[0])[:, None, None],
+                                  np.arange(Ntot_samp.shape[1])[None, :, None], idx] = (idx < Ntot_samp[..., None])
+
+                    Ntot_samp_diff = Ntot_samp - 1
+                    Ntot_samp_diff[Ntot_samp_diff < 0] = 0
+                    mask_samp_M_diff = np.zeros((Ntot_samp.shape[0], Ntot_samp.shape[1], self.ndim - 1))
+                    idx = np.arange(self.ndim - 1)[None, None, :]
+                    mask_samp_M_diff[np.arange(Ntot_samp.shape[0])[:, None, None],
+                                     np.arange(Ntot_samp.shape[1])[None, :, None],
+                                     idx] = (idx < Ntot_samp_diff[..., None])
+
+                    mask_samp_M1 = mask_samp_all[:, :, 0]
+
+                    mask_M1_truth = torch.from_numpy(mask_samp_M1).float().cuda()
+                    mask_Mdiff_truth = torch.from_numpy(mask_samp_M_diff).float().cuda()
+                    Nhalos_truth = torch.from_numpy(Ntot_samp).float().cuda()
+                else:
+                    # Nhalos_truth = np.maximum(np.round(x_Ntot.cpu().detach().numpy()), 0).astype(int)
+                    # tensor_zero = torch.Tensor(0).cuda()
+                    # Nhalos_truth = torch.maximum(torch.round(x_Ntot), tensor_zero)
+                    Nhalos_truth = Nhalos_truth_all[jb].to('cuda')
+                    mask_M1_truth = mask_M1_truth_all[jb].to('cuda')
+                    mask_Mdiff_truth = mask_Mdiff_truth_all[jb].to('cuda')
+            else:
+                Nhalos_truth = Nhalos_truth_all[jb].to('cuda')
+                mask_Mdiff_truth = mask_Mdiff_truth_all[jb].to('cuda')
+                mask_M1_truth = mask_M1_truth_all[jb].to('cuda')
+
+            if train_M1:
+                cond_inp_M1 = torch.cat([Nhalos_truth, cond_out], dim=1)
+                if self.sep_M1_cond:
+                    cond_inp_M1 = self.cond_M1_layer(cond_inp_M1)
+                if jb == 0:
+                    logP_M1 = (self.M1_model.forward(x_M1[jb], cond_inp_M1)) * mask_M1_truth
+                else:
+                    logP_M1 += (self.M1_model.forward(x_M1[jb], cond_inp_M1)) * mask_M1_truth
+                if use_M1_samples:
+                    M1_samp = self.M1_model.inverse(cond_inp_M1, mask_M1_truth).detach().numpy()
+                    M1_samp = np.maximum(M1_samp, 0)
+                    M1_truth = torch.from_numpy(M1_samp).float().cuda()
+                else:
+                    M1_truth = x_M1[jb]
+            else:
+                M1_truth = x_M1[jb]
+                # Nhalos_truth = x_Ntot[jb]
+                Nhalos_truth = Nhalos_truth_all[jb].to('cuda')
+
+            if train_Mdiff:
+                cond_inp_Mdiff = torch.cat([Nhalos_truth, M1_truth, cond_out], dim=1)
+                if self.sep_Mdiff_cond:
+                    cond_inp_Mdiff = self.cond_Mdiff_layer(cond_inp_Mdiff)
+                if jb == 0:
+                    logP_Mdiff = self.Mdiff_model.forward(x_Mdiff[jb], cond_inp_Mdiff, mask_Mdiff_truth)
+                else:
+                    logP_Mdiff += self.Mdiff_model.forward(x_Mdiff[jb], cond_inp_Mdiff, mask_Mdiff_truth)
         loss = torch.mean(-logP_Ntot - logP_M1 - logP_Mdiff)
 
         return loss
@@ -193,105 +195,106 @@ class COMBINED_Model(nn.Module):
         train_M1=False,
         train_Mdiff=False,
         ):
-        cond_out = self.conv_layers(cond_x)
-        cond_out = torch.cat((cond_out, cond_x_nsh), dim=1)
-        if self.sep_Ntot_cond:
-            cond_out_Ntot = self.cond_Ntot_layer(cond_out)
-        else:
-            cond_out_Ntot = cond_out
+        nbatches = cond_x.shape[0]
+        Ntot_samp_out, M1_samp_out, M_diff_samp_out = [], [], []
+        mask_tensor_M1_samp_out, mask_tensor_Mdiff_samp_out = [], []
+        for jb in range(nbatches):
+            cond_out = self.conv_layers(cond_x[jb])
+            cond_out = torch.cat((cond_out, cond_x_nsh[jb]), dim=1)
+            if self.sep_Ntot_cond:
+                cond_out_Ntot = self.cond_Ntot_layer(cond_out)
+            else:
+                cond_out_Ntot = cond_out
 
-        if train_Ntot:
-            Ntot_samp_tensor = self.Ntot_model.inverse(cond_out_Ntot)
-            Ntot_samp = np.maximum(np.round(Ntot_samp_tensor.cpu().detach().numpy()) - 1, 0).astype(int)
-        else:
-            # Ntot_samp = torch.Tensor(Nhalos_truth)
-            Ntot_samp = Nhalos_truth.cpu().detach().numpy()
-
-        # nvox_batch = 64 // 8
-        nvox_batch = self.nout // self.nbatch
-        Ntot_samp_rs = Ntot_samp.reshape(-1, nvox_batch**3)
-        # print(cond_out_Ntot.shape, Ntot_samp.shape, Ntot_samp_rs.shape)
-
-        # Ntot_samp = np.maximum(np.round(self.Ntot_model.inverse(cond_out_Ntot).detach().numpy() - 1), 0).astype(int)
-        nsim, nvox = Ntot_samp_rs.shape[0], Ntot_samp_rs.shape[1]
-        mask_samp_all = np.zeros((nsim, nvox, self.ndim))
-        idx = np.arange(self.ndim)[None, None, :]
-        mask_samp_all[np.arange(nsim)[:, None, None],
-                      np.arange(nvox)[None, :, None], idx] = (idx < Ntot_samp_rs[..., None])
-
-        Ntot_samp_diff = Ntot_samp_rs - 1
-        Ntot_samp_diff[Ntot_samp_diff < 0] = 0
-        mask_samp_M_diff = np.zeros((nsim, nvox, self.ndim - 1))
-        idx = np.arange(self.ndim - 1)[None, None, :]
-        mask_samp_M_diff[np.arange(nsim)[:, None, None],
-                         np.arange(nvox)[None, :, None], idx] = (idx < Ntot_samp_diff[..., None])
-
-        mask_samp_M1 = mask_samp_all[:, :, 0]
-
-        mask_samp_M_diff = mask_samp_M_diff.reshape(nsim * nvox, self.ndim - 1)
-        mask_samp_M1 = mask_samp_M1.reshape(nsim * nvox, 1)
-
-        if use_truth_M1:
-            mask_tensor_M1_samp = (mask_M1_truth)
-            mask_tensor_M1_samp = mask_tensor_M1_samp.float().cuda()
-
-        else:
-            # mask_tensor_M1_samp = torch.Tensor(np.array([mask_samp_all[:, 0]]).T)
-            mask_tensor_M1_samp = torch.from_numpy(mask_samp_M1)
-            mask_tensor_M1_samp = mask_tensor_M1_samp.float().cuda()
-
-        if use_truth_Mdiff:
-            mask_tensor_Mdiff_samp = (mask_Mdiff_truth)
-        else:
-            # mask_tensor_Mdiff_samp = torch.Tensor(np.copy(mask_samp))
-            mask_tensor_Mdiff_samp = torch.from_numpy(mask_samp_M_diff)
-            mask_tensor_Mdiff_samp = mask_tensor_Mdiff_samp.float().cuda()
-
-        if use_truth_Nhalo:
-            Nhalo_conditional = Nhalos_truth
-        else:
             if train_Ntot:
-                Nhalo_conditional = torch.Tensor(np.array([Ntot_samp]).T)
-                Nhalo_conditional = Nhalo_conditional.float().cuda()
+                Ntot_samp_tensor = self.Ntot_model.inverse(cond_out_Ntot)
+                Ntot_samp = np.maximum(np.round(Ntot_samp_tensor.cpu().detach().numpy()) - 1, 0).astype(int)
             else:
-                raise ValueError('Must use truth Nhalo if not training Ntot')
+                # Ntot_samp = torch.Tensor(Nhalos_truth)
+                Ntot_samp = np.maximum(np.round(Nhalos_truth.cpu().detach().numpy()) - 1, 0).astype(int)
+                # Ntot_samp = Nhalos_truth.cpu().detach().numpy()
+            Ntot_samp_out.append(Ntot_samp)
 
-        cond_inp_M1 = torch.cat([Nhalo_conditional, cond_out], dim=1)
-        if self.sep_M1_cond:
-            cond_inp_M1 = self.cond_M1_layer(cond_inp_M1)
+            # nvox_batch = 64 // 8
+            nvox_batch = self.nout // self.nbatch
+            Ntot_samp_rs = Ntot_samp.reshape(-1, nvox_batch**3)
+            # print(cond_out_Ntot.shape, Ntot_samp.shape, Ntot_samp_rs.shape)
 
-        if train_M1:
-            M1_samp, _ = self.M1_model.inverse(cond_inp_M1, mask_tensor_M1_samp)
-        else:
-            M1_samp = None
+            # Ntot_samp = np.maximum(np.round(self.Ntot_model.inverse(cond_out_Ntot).detach().numpy() - 1), 0).astype(int)
+            nsim, nvox = Ntot_samp_rs.shape[0], Ntot_samp_rs.shape[1]
+            mask_samp_all = np.zeros((nsim, nvox, self.ndim))
+            idx = np.arange(self.ndim)[None, None, :]
+            mask_samp_all[np.arange(nsim)[:, None, None],
+                          np.arange(nvox)[None, :, None], idx] = (idx < Ntot_samp_rs[..., None])
 
-        if use_truth_M1:
-            M1_conditional = M1_truth
-        else:
+            Ntot_samp_diff = Ntot_samp_rs - 1
+            Ntot_samp_diff[Ntot_samp_diff < 0] = 0
+            mask_samp_M_diff = np.zeros((nsim, nvox, self.ndim - 1))
+            idx = np.arange(self.ndim - 1)[None, None, :]
+            mask_samp_M_diff[np.arange(nsim)[:, None, None],
+                             np.arange(nvox)[None, :, None], idx] = (idx < Ntot_samp_diff[..., None])
+
+            mask_samp_M1 = mask_samp_all[:, :, 0]
+
+            # mask_samp_M_diff = mask_samp_M_diff.reshape(nsim * nvox, self.ndim - 1)
+            # mask_samp_M1 = mask_samp_M1.reshape(nsim * nvox, 1)
+            mask_samp_M1 = mask_samp_M1.reshape(nbatches, nsim * nvox // nbatches, 1)[jb, ...]
+            mask_samp_M_diff = mask_samp_M_diff.reshape(nbatches, nsim * nvox // nbatches, self.ndim - 1)[jb, ...]
+            if use_truth_M1:
+                mask_tensor_M1_samp = (mask_M1_truth)[jb, ...]
+                mask_tensor_M1_samp = mask_tensor_M1_samp.float().cuda()
+
+            else:
+                # mask_tensor_M1_samp = torch.Tensor(np.array([mask_samp_all[:, 0]]).T)
+                mask_tensor_M1_samp = torch.from_numpy(mask_samp_M1)
+                mask_tensor_M1_samp = mask_tensor_M1_samp.float().cuda()
+            mask_tensor_M1_samp_out.append(mask_tensor_M1_samp)
+
+            if use_truth_Mdiff:
+                mask_tensor_Mdiff_samp = (mask_Mdiff_truth)
+            else:
+                # mask_tensor_Mdiff_samp = torch.Tensor(np.copy(mask_samp))
+                mask_tensor_Mdiff_samp = torch.from_numpy(mask_samp_M_diff)
+                mask_tensor_Mdiff_samp = mask_tensor_Mdiff_samp.float().cuda()
+            mask_tensor_Mdiff_samp_out.append(mask_tensor_Mdiff_samp)
+
+            if use_truth_Nhalo:
+                Nhalo_conditional = Nhalos_truth[jb, ...]
+            else:
+                if train_Ntot:
+                    Nhalo_conditional = torch.Tensor(np.array([Ntot_samp]).T)
+                    Nhalo_conditional = Nhalo_conditional.float().cuda()
+                else:
+                    raise ValueError('Must use truth Nhalo if not training Ntot')
+
+            cond_inp_M1 = torch.cat([Nhalo_conditional, cond_out], dim=1)
+            if self.sep_M1_cond:
+                cond_inp_M1 = self.cond_M1_layer(cond_inp_M1)
+
             if train_M1:
-                M1_conditional = torch.unsqueeze(M1_samp, 0).T
+                M1_samp, _ = self.M1_model.inverse(cond_inp_M1, mask_tensor_M1_samp)
             else:
-                raise ValueError('Must use truth M1 if not training M1')
+                # M1_samp = None
+                M1_samp = M1_truth[jb, ...]
+            M1_samp_out.append(M1_samp)
 
-        if train_Mdiff:
-            cond_inp_Mdiff = torch.cat([Nhalo_conditional, M1_conditional, cond_out], dim=1)
-            if self.sep_Mdiff_cond:
-                cond_inp_Mdiff = self.cond_Mdiff_layer(cond_inp_Mdiff)
+            if use_truth_M1:
+                M1_conditional = M1_truth[jb, ...]
+            else:
+                if train_M1:
+                    M1_conditional = torch.unsqueeze(M1_samp, 0).T
+                else:
+                    raise ValueError('Must use truth M1 if not training M1')
 
-            # nsamp = cond_out.shape[0]
-            # z = torch.zeros(mask_tensor_Mdiff_samp.shape)
-            # for jd in range(z.shape[1]):
-            #     z[:, jd] = self.priors_all[jd].sample((nsamp,))[:, 0]
+            if train_Mdiff:
+                cond_inp_Mdiff = torch.cat([Nhalo_conditional, M1_conditional, cond_out], dim=1)
+                if self.sep_Mdiff_cond:
+                    cond_inp_Mdiff = self.cond_Mdiff_layer(cond_inp_Mdiff)
+                M_diff_samp, _ = self.Mdiff_model.inverse(cond_inp_Mdiff, mask_tensor_Mdiff_samp)
+            else:
+                M_diff_samp = None
+            M_diff_samp_out.append(M_diff_samp)
+        # if not train_M1:
+        # M1_samp_out = M1_truth
 
-            # m, _ = z.shape
-            # log_det = torch.zeros(m)
-            # log_det = log_det.cuda()
-            # for flow in self.flows_Mdiff[::-1]:
-            #     z, ld = flow.inverse(z, cond_inp_Mdiff, mask_tensor_Mdiff_samp)
-            #     log_det += ld
-            # x = z
-            # M_diff_samp = x
-            M_diff_samp, _ = self.Mdiff_model.inverse(cond_inp_Mdiff, mask_tensor_Mdiff_samp)
-        else:
-            M_diff_samp = None
-        return Ntot_samp, M1_samp, M_diff_samp, mask_tensor_M1_samp, mask_tensor_Mdiff_samp
+        return Ntot_samp_out, M1_samp_out, M_diff_samp_out, mask_tensor_M1_samp_out, mask_tensor_Mdiff_samp_out
