@@ -191,6 +191,7 @@ class COMBINED_Model(nn.Module):
         mask_M1_truth=None,
         Nhalos_truth=None,
         M1_truth=None,
+        Mdiff_truth=None,
         train_Ntot=False,
         train_M1=False,
         train_Mdiff=False,
@@ -205,7 +206,7 @@ class COMBINED_Model(nn.Module):
                 cond_out_Ntot = self.cond_Ntot_layer(cond_out)
             else:
                 cond_out_Ntot = cond_out
-
+            # print(cond_out_Ntot.shape)
             if train_Ntot:
                 Ntot_samp_tensor = self.Ntot_model.inverse(cond_out_Ntot)
                 Ntot_samp = np.maximum(np.round(Ntot_samp_tensor.cpu().detach().numpy()) - 1, 0).astype(int)
@@ -214,12 +215,12 @@ class COMBINED_Model(nn.Module):
                 Ntot_samp = np.maximum(np.round(Nhalos_truth.cpu().detach().numpy()) - 1, 0).astype(int)
                 # Ntot_samp = Nhalos_truth.cpu().detach().numpy()
             Ntot_samp_out.append(Ntot_samp)
-
+            
             # nvox_batch = 64 // 8
             nvox_batch = self.nout // self.nbatch
             Ntot_samp_rs = Ntot_samp.reshape(-1, nvox_batch**3)
             # print(cond_out_Ntot.shape, Ntot_samp.shape, Ntot_samp_rs.shape)
-
+            # print(Ntot_samp_rs.shape, nvox_batch)
             # Ntot_samp = np.maximum(np.round(self.Ntot_model.inverse(cond_out_Ntot).detach().numpy() - 1), 0).astype(int)
             nsim, nvox = Ntot_samp_rs.shape[0], Ntot_samp_rs.shape[1]
             mask_samp_all = np.zeros((nsim, nvox, self.ndim))
@@ -235,11 +236,14 @@ class COMBINED_Model(nn.Module):
                              np.arange(nvox)[None, :, None], idx] = (idx < Ntot_samp_diff[..., None])
 
             mask_samp_M1 = mask_samp_all[:, :, 0]
+            # print(mask_samp_all.shape)
+            mask_samp_M_diff = mask_samp_M_diff.reshape(nsim * nvox, self.ndim - 1)
+            mask_samp_M1 = mask_samp_M1.reshape(nsim * nvox, 1)
 
-            # mask_samp_M_diff = mask_samp_M_diff.reshape(nsim * nvox, self.ndim - 1)
-            # mask_samp_M1 = mask_samp_M1.reshape(nsim * nvox, 1)
-            mask_samp_M1 = mask_samp_M1.reshape(nbatches, nsim * nvox // nbatches, 1)[jb, ...]
-            mask_samp_M_diff = mask_samp_M_diff.reshape(nbatches, nsim * nvox // nbatches, self.ndim - 1)[jb, ...]
+            # mask_samp_M1 = mask_samp_M1.reshape(nbatches, nsim * nvox // nbatches, 1)[jb, ...]
+            # mask_samp_M_diff = mask_samp_M_diff.reshape(nbatches, nsim * nvox // nbatches, self.ndim - 1)[jb, ...]
+            # import pdb; pdb.set_trace()
+
             if use_truth_M1:
                 mask_tensor_M1_samp = (mask_M1_truth)[jb, ...]
                 mask_tensor_M1_samp = mask_tensor_M1_samp.float().cuda()
@@ -249,9 +253,9 @@ class COMBINED_Model(nn.Module):
                 mask_tensor_M1_samp = torch.from_numpy(mask_samp_M1)
                 mask_tensor_M1_samp = mask_tensor_M1_samp.float().cuda()
             mask_tensor_M1_samp_out.append(mask_tensor_M1_samp)
-
+            # print(mask_tensor_M1_samp.shape, mask_samp_M1.shape, mask_samp_all.shape)
             if use_truth_Mdiff:
-                mask_tensor_Mdiff_samp = (mask_Mdiff_truth)
+                mask_tensor_Mdiff_samp = (mask_Mdiff_truth[jb,...])
             else:
                 # mask_tensor_Mdiff_samp = torch.Tensor(np.copy(mask_samp))
                 mask_tensor_Mdiff_samp = torch.from_numpy(mask_samp_M_diff)
@@ -270,7 +274,7 @@ class COMBINED_Model(nn.Module):
             cond_inp_M1 = torch.cat([Nhalo_conditional, cond_out], dim=1)
             if self.sep_M1_cond:
                 cond_inp_M1 = self.cond_M1_layer(cond_inp_M1)
-
+            # print(Ntot_samp.shape,cond_inp_M1.shape, mask_tensor_M1_samp.shape)
             if train_M1:
                 M1_samp, _ = self.M1_model.inverse(cond_inp_M1, mask_tensor_M1_samp)
             else:
@@ -292,7 +296,7 @@ class COMBINED_Model(nn.Module):
                     cond_inp_Mdiff = self.cond_Mdiff_layer(cond_inp_Mdiff)
                 M_diff_samp, _ = self.Mdiff_model.inverse(cond_inp_Mdiff, mask_tensor_Mdiff_samp)
             else:
-                M_diff_samp = None
+                M_diff_samp = Mdiff_truth[jb, ...]
             M_diff_samp_out.append(M_diff_samp)
         # if not train_M1:
         # M1_samp_out = M1_truth

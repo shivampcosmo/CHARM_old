@@ -51,6 +51,78 @@ def load_density_halo_data(
     return df_d_all, df_d_all_nsh, df_Mh_all, df_Nh
 
 
+def load_density_halo_data_NGP(
+        ji,
+        nside_d,
+        nbatch,
+        nfilter,
+        ncnn,
+        z_all,
+        nside_h,
+        sdir='/pscratch/sd/s/spandey/quijote/data_NGP_self',
+        stype='cic'
+    ):
+    # load the density data
+    df_load = pk.load(open(
+        sdir + '/' + str(ji) + '/density_subvol_m_res_' + str(nside_d) + '_z=' + str(0) + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(ncnn) + '.pk', 'rb')
+        )
+    if stype == 'cic':
+        df_d0 = df_load['density_cic_pad']
+    if stype == 'ngp':
+        df_d0 = df_load['density_ngp_pad']
+    df_d_all = np.zeros((df_d0.shape[0], len(z_all), df_d0.shape[1], df_d0.shape[2], df_d0.shape[3]))
+    for iz, z in enumerate(z_all):
+        df_load = pk.load(open(
+            sdir + '/' + str(ji) + '/density_subvol_m_res_' + str(nside_d) + '_z=' + str(z) + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(ncnn) + '.pk', 'rb')
+            )
+        if stype == 'cic':
+            df_d_all[:, iz, ...] = df_load['density_cic_pad']
+        if stype == 'ngp':
+            df_d_all[:, iz, ...] = df_load['density_ngp_pad']
+
+
+    df_d_all = np.log(1 + df_d_all + 1e-5)
+
+    # this is density at the output nside of CNN, which is same as halo nside
+    # df_d0 = np.load(
+    #     sdir + '/' + str(ji) + '/df_m_' + str(nside_h) + '_nbatch=' + str(nbatch) + '_nfilter=' + str(nfilter) +
+    #     '_ncnn=' + str(0) + '_CIC_z=0_subvol.npy'
+    #     )
+    df_load = pk.load(open(
+        sdir + '/' + str(ji) + '/density_subvol_m_res_' + str(nside_h) + '_z=' + str(0) + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(0) + '.pk', 'rb')
+        )
+    if stype == 'cic':
+        df_d0 = df_load['density_cic_pad']
+    if stype == 'ngp':
+        df_d0 = df_load['density_ngp_pad']    
+    df_d_all_nsh = np.zeros((df_d0.shape[0], len(z_all), df_d0.shape[1], df_d0.shape[2], df_d0.shape[3]))
+    for iz, z in enumerate(z_all):
+        df_load = pk.load(open(
+            sdir + '/' + str(ji) + '/density_subvol_m_res_' + str(nside_h) + '_z=' + str(z) + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(0) + '.pk', 'rb')
+            )
+        if stype == 'cic':
+            df_d_all_nsh[:, iz, ...] = df_load['density_cic_pad']
+        if stype == 'ngp':
+            df_d_all_nsh[:, iz, ...] = df_load['density_ngp_pad']
+
+        # df_d_all_nsh[:, iz, ...] = np.load(
+        #     sdir + '/' + str(ji) + '/df_m_' + str(nside_h) + '_nbatch=' + str(nbatch) + '_nfilter=' + str(nfilter) +
+        #     '_ncnn=' + str(0) + '_CIC_z=' + str(z) + '_subvol.npy'
+        #     )
+
+    df_d_all_nsh = np.log(1 + df_d_all_nsh + 1e-5)
+
+    # load the halo data
+    # fname = sdir + '/' + str(ji) + '/halo_data_dict_' + str(nside_h) + '.pk'
+    fname = sdir + '/' + str(ji) + '/halos_subvol_res_' + str(nside_h) + '_z=' + str(0) + '.pk'
+    df_h = pk.load(open(fname, 'rb'))
+    # This has information on the halo mass for all the halos in the voxel
+    df_Mh_all = df_h['M_halos']
+    # This has information on the number of halos in the voxel
+    df_Nh = df_h['N_halos']
+    return df_d_all, df_d_all_nsh, df_Mh_all, df_Nh
+
+
 def prep_density_halo_cats(
         df_d_all, df_d_all_nsh, df_Mh_all, df_Nh, nsims=None, nstart=None, Mmin=13.1, Mmax=16.0, Nmax=None, sigv=0.05
     ):
