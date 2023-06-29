@@ -215,6 +215,7 @@ class NSF_M1_CNNcond(nn.Module):
         ngauss=1,
         base_dist="gauss",
         mu_pos=False,
+        base_dist_pwall = 'pl_exp'
         ):
         super().__init__()
         self.dim = dim
@@ -226,12 +227,16 @@ class NSF_M1_CNNcond(nn.Module):
         self.base_dist = base_dist
         self.mu_pos = mu_pos
         self.num_cond = num_cond
+        self.base_dist_pwall = base_dist_pwall
         self.init_param = nn.Parameter(torch.Tensor(3 * K - 1))
         if self.base_dist in ["gauss", "halfgauss"]:
             if self.ngauss == 1:
                 self.layer_init_gauss = base_network(self.num_cond, 2, hidden_dim)
             else:
-                self.layer_init_gauss = base_network(self.num_cond, 3 * self.ngauss, hidden_dim)
+                if self.base_dist_pwall == 'pl_exp':
+                    self.layer_init_gauss = base_network(self.num_cond, 3 * self.ngauss+2, hidden_dim)
+                else:
+                    self.layer_init_gauss = base_network(self.num_cond, 3 * self.ngauss, hidden_dim)
         elif self.base_dist == 'weibull':
             self.layer_init_gauss = base_network(self.num_cond, 2, hidden_dim)
         elif self.base_dist == 'gumbel':
@@ -258,11 +263,28 @@ class NSF_M1_CNNcond(nn.Module):
             var = torch.exp(alpha)
             return mu, var
         else:
-            mu_all, alpha_all, pw_all = (
+            mu_all, alpha_all, pw_all_orig = (
                 out[:, 0:self.ngauss], out[:, self.ngauss:2 * self.ngauss], out[:, 2 * self.ngauss:3 * self.ngauss]
                 )
             if self.mu_pos:
                 mu_all = (1 + nn.Tanh()(mu_all)) / 2
+            if self.base_dist_pwall == 'pl_exp':
+                # in this we have a power law and an exponential as a base distribution
+                pw_all_orig = torch.exp(pw_all_orig)
+                al = torch.exp(out[:, 3*self.ngauss])
+                # put al between 0 and 2
+                al = 0. * nn.Tanh()(al)
+                bt = torch.exp(out[:, 3*self.ngauss + 1]) + 1.
+                # we first predict the base distirbution given the alpha and beta of the form mu**alpha * exp(-beta*mu)
+                base_pws = torch.zeros(out.shape[0], self.ngauss)
+                base_pws = base_pws.to('cuda')
+                for i in range(self.ngauss):
+                    base_pws[:, i] = torch.pow(mu_all[:,i], al) * torch.exp(-bt * mu_all[:,i])
+                
+                pw_all = torch.mul(pw_all_orig, base_pws)
+            else:
+                pw_all = pw_all_orig
+
             pw_all = nn.Softmax(dim=1)(pw_all)
             var_all = torch.exp(alpha_all)
             return mu_all, var_all, pw_all
@@ -280,8 +302,8 @@ class NSF_M1_CNNcond(nn.Module):
                 scale, conc = torch.exp(mu), torch.exp(alpha)
             else:
                 if self.mu_pos:
-                    mu = torch.exp(mu)
-                    # mu = (1 + nn.Tanh()(mu)) / 2
+                    # mu = torch.exp(mu)
+                    mu = (1 + nn.Tanh()(mu)) / 2
                 sig = torch.exp(alpha)
         else:
             print('base_dist not recognized')
@@ -349,8 +371,8 @@ class NSF_M1_CNNcond(nn.Module):
                 scale, conc = torch.exp(mu), torch.exp(alpha)
             else:
                 if self.mu_pos:
-                    mu = torch.exp(mu)
-                    # mu = (1 + nn.Tanh()(mu)) / 2
+                    # mu = torch.exp(mu)
+                    mu = (1 + nn.Tanh()(mu)) / 2
                 sig = torch.exp(alpha)
         else:
             print('base_dist not recognized')
@@ -361,6 +383,7 @@ class NSF_M1_CNNcond(nn.Module):
                 x = mu + torch.randn(cond_inp.shape[0]) * torch.sqrt(var)
             else:
                 counts = torch.distributions.multinomial.Multinomial(total_count=1, probs=pw_all).sample()
+                counts = counts.to('cuda')
                 # loop over gaussians
                 x = torch.empty(0, device=counts.device)
                 for k in range(self.ngauss):
@@ -368,7 +391,7 @@ class NSF_M1_CNNcond(nn.Module):
                     ind = torch.nonzero(counts[:, k])
                     # if there are any indices, sample from kth gaussian
                     if ind.shape[0] > 0:
-                        x_k = (mu_all[ind, k][:, 0] + torch.randn(ind.shape[0]) * torch.sqrt(var_all[ind, k])[:, 0])
+                        x_k = (mu_all[ind, k][:, 0] + torch.randn(ind.shape[0]).to('cuda') * torch.sqrt(var_all[ind, k])[:, 0])
                         x = torch.cat((x, x_k), dim=0)
 
         if self.base_dist == 'halfgauss':
@@ -420,6 +443,7 @@ class NSF_Mdiff_CNNcond(nn.Module):
         ngauss=1,
         base_dist="gumbel",
         mu_pos=False,
+        base_dist_pwall = 'pl_exp'
         ):
         super().__init__()
         self.dim = dim
@@ -431,6 +455,7 @@ class NSF_Mdiff_CNNcond(nn.Module):
         self.base_dist = base_dist
         self.mu_pos = mu_pos
         self.num_cond = num_cond
+        self.base_dist_pwall = base_dist_pwall
         self.init_param = nn.Parameter(torch.Tensor(3 * K - 1))
         self.layers_all_dim = nn.ModuleList()
         self.layers_all_dim_init = nn.ModuleList()
@@ -441,7 +466,10 @@ class NSF_Mdiff_CNNcond(nn.Module):
                 if self.ngauss == 1:
                     layer_init_gauss = base_network(self.num_cond + jd, 2, hidden_dim)
                 else:
-                    layer_init_gauss = base_network(self.num_cond + jd, 3 * self.ngauss, hidden_dim)
+                    if self.base_dist_pwall == 'pl_exp':
+                        layer_init_gauss = base_network(self.num_cond + jd, 3 * self.ngauss + 2, hidden_dim)
+                    else:
+                        layer_init_gauss = base_network(self.num_cond + jd, 3 * self.ngauss, hidden_dim)
             elif self.base_dist == 'weibull':
                 layer_init_gauss = base_network(self.num_cond + jd, 2, hidden_dim)
             elif self.base_dist == 'gumbel':
@@ -470,11 +498,31 @@ class NSF_Mdiff_CNNcond(nn.Module):
             var = torch.exp(alpha)
             return mu, var
         else:
-            mu_all, alpha_all, pw_all = (
+            mu_all, alpha_all, pw_all_orig = (
                 out[:, 0:self.ngauss], out[:, self.ngauss:2 * self.ngauss], out[:, 2 * self.ngauss:3 * self.ngauss]
                 )
             if self.mu_pos:
                 mu_all = (1 + nn.Tanh()(mu_all)) / 2
+            else:
+                mu_all = (nn.Tanh()(mu_all))
+            if self.base_dist_pwall == 'pl_exp':
+                # in this we have a power law and an exponential as a base distribution
+                pw_all_orig = torch.exp(pw_all_orig)
+                al = torch.exp(out[:, 3*self.ngauss])
+                # put al between 0 and 2
+                al = 0. * nn.Tanh()(al)
+                bt = torch.exp(out[:, 3*self.ngauss + 1]) + 1.
+                # we first predict the base distirbution given the alpha and beta of the form mu**alpha * exp(-beta*mu)
+                base_pws = torch.zeros(out.shape[0], self.ngauss)
+                base_pws = base_pws.to('cuda')
+                for i in range(self.ngauss):
+                    base_pws[:, i] = torch.pow(mu_all[:,i], al) * torch.exp(-bt * mu_all[:,i])
+                
+                pw_all = torch.mul(pw_all_orig, base_pws)
+            else:
+                pw_all = pw_all_orig
+
+
             pw_all = nn.Softmax(dim=1)(pw_all)
             var_all = torch.exp(alpha_all)
             return mu_all, var_all, pw_all
@@ -490,9 +538,12 @@ class NSF_Mdiff_CNNcond(nn.Module):
             else:
                 cond_inp_jd = cond_inp
             # print(cond_inp.shape)
-            if self.base_dist in ["halfgauss"]:
+            if self.base_dist in ["gauss","halfgauss"]:
                 if self.ngauss == 1:
                     mu, var = self.get_gauss_func_mu_alpha(jd, cond_inp_jd)
+                else:
+                    mu_all, var_all, pw_all = self.get_gauss_func_mu_alpha(jd, cond_inp_jd)
+
             elif self.base_dist in ['weibull', 'gumbel']:
                 out = self.layers_all_dim_init[jd](cond_inp_jd)
                 mu, alpha = out[:, 0], out[:, 1]
@@ -526,7 +577,21 @@ class NSF_Mdiff_CNNcond(nn.Module):
                 log_det_all_jd += ld
                 x = z
 
-            if self.base_dist == 'halfgauss':
+            if self.base_dist == 'gauss':
+                if self.ngauss == 1:
+                    logp_jd = -0.5 * np.log(2 * np.pi) - 0.5 * torch.log(var) - 0.5 * (x - mu)**2 / var
+                else:
+                    Li_all = torch.zeros(mu_all.shape[0])
+                    Li_all = Li_all.to('cuda')
+                    for i in range(self.ngauss):
+                        Li_all += (
+                            pw_all[:, i] * (1 / torch.sqrt(2 * np.pi * var_all[:, i])) *
+                            torch.exp(-0.5 * ((x - mu_all[:, i])**2) / (var_all[:, i]))
+                            )
+                    logp_jd = torch.log(Li_all)
+
+
+            elif self.base_dist == 'halfgauss':
                 if self.ngauss == 1:
                     x = torch.exp(x - mu)
                     hf = HalfNormal((torch.sqrt(var)))
@@ -558,9 +623,12 @@ class NSF_Mdiff_CNNcond(nn.Module):
                 cond_inp_jd = torch.cat([cond_inp, z_out[:, :jd]], dim=1)
             else:
                 cond_inp_jd = cond_inp
-            if self.base_dist in ["halfgauss"]:
+            if self.base_dist in ["gauss","halfgauss"]:
                 if self.ngauss == 1:
                     mu, var = self.get_gauss_func_mu_alpha(jd, cond_inp_jd)
+                else:
+                    mu_all, var_all, pw_all = self.get_gauss_func_mu_alpha(jd, cond_inp_jd)
+
 
             elif self.base_dist in ['gumbel', 'weibull']:
                 out = self.layers_all_dim_init[jd](cond_inp_jd)
@@ -579,6 +647,19 @@ class NSF_Mdiff_CNNcond(nn.Module):
             if self.base_dist == 'gauss':
                 if self.ngauss == 1:
                     x = mu + torch.randn(cond_inp_jd.shape[0], device='cuda') * torch.sqrt(var)
+                else:
+                    counts = torch.distributions.multinomial.Multinomial(total_count=1, probs=pw_all).sample()
+                    counts = counts.to('cuda')
+                    # loop over gaussians
+                    x = torch.empty(0, device=counts.device)
+                    for k in range(self.ngauss):
+                        # find indices where count is non-zero for kth gaussian
+                        ind = torch.nonzero(counts[:, k])
+                        # if there are any indices, sample from kth gaussian
+                        if ind.shape[0] > 0:
+                            x_k = (mu_all[ind, k][:, 0] + torch.randn(ind.shape[0]).to('cuda') * torch.sqrt(var_all[ind, k])[:, 0])
+                            x = torch.cat((x, x_k), dim=0)
+
 
             elif self.base_dist == 'halfgauss':
                 if self.ngauss == 1:
@@ -617,86 +698,243 @@ class NSF_Mdiff_CNNcond(nn.Module):
         return x
 
 
-# class MAF_CNN_cond(nn.Module):
-#     """
-#     This is the model for the auto-regressive model of the lower halo masses.
-#     This takes as input the environment, heavist halo mass and number of halos. 
-#     It is based on simple CNNs with auto-regressive structure.
-#     """
+class NSF_M_all_uncond(nn.Module):
+    """
+    This function models the probability of observing the heaviest halo mass given the density field.
+    """
 
-#     def __init__(self, dim, hidden_dim=8, base_network=FCNN, num_cond=0):
-#         super().__init__()
-#         self.dim = dim
-#         self.layers = nn.ModuleList()
-#         self.num_cond = num_cond
-#         if self.num_cond == 0:
-#             self.initial_param = nn.Parameter(torch.Tensor(1))
-#         else:
-#             self.layer_init = base_network(self.num_cond, 2, hidden_dim)
-#         for i in range(1, dim):
-#             self.layers += [base_network(self.num_cond + i, 2, hidden_dim)]
-#         self.mu_all_forward = np.zeros(self.dim)
-#         self.alpha_all_forward = np.zeros(self.dim)
-#         self.mu_all_inverse = torch.zeros(self.dim)
-#         self.alpha_all_inverse = torch.zeros(self.dim)
-#         if self.num_cond == 0:
-#             self.reset_parameters()
+    def __init__(
+        self,
+        dim=1,
+        K=5,
+        B=3,
+        nflows=1,
+        ngauss=1,
+        base_dist="gauss",
+        mu_pos=False,
+        base_dist_pwall = 'pl_exp'
+        ):
+        super().__init__()
+        self.dim = dim
+        self.K = K
+        self.B = B
+        # self.num_cond = num_cond
+        self.nflows = nflows
+        self.ngauss = ngauss
+        self.base_dist = base_dist
+        self.mu_pos = mu_pos
+        # self.num_cond = num_cond
+        self.base_dist_pwall = base_dist_pwall
+        self.init_param = nn.Parameter(torch.Tensor(3 * K - 1))
+        if self.base_dist in ["gauss", "halfgauss"]:
+            if self.ngauss == 1:
+                self.initial_param = nn.Parameter(torch.Tensor(2))
+                # self.layer_init_gauss = base_network(self.num_cond, 2, hidden_dim)
+            else:
+                if self.base_dist_pwall == 'pl_exp':
+                    self.initial_param = nn.Parameter(torch.Tensor(3 * self.ngauss+2))
+                    # self.layer_init_gauss = base_network(self.num_cond, 3 * self.ngauss+2, hidden_dim)
+                else:
+                    self.initial_param = nn.Parameter(torch.Tensor(3 * self.ngauss))                    
+                    # self.layer_init_gauss = base_network(self.num_cond, 3 * self.ngauss, hidden_dim)
+        elif self.base_dist == 'weibull':
+            self.initial_param = nn.Parameter(torch.Tensor(2))
+            # self.layer_init_gauss = base_network(self.num_cond, 2, hidden_dim)
+        elif self.base_dist == 'gumbel':
+            self.initial_param = nn.Parameter(torch.Tensor(2))
+            # self.layer_init_gauss = base_network(self.num_cond, 2, hidden_dim)
+        else:
+            print('base_dist not recognized')
+            raise ValueError
 
-#     def reset_parameters(self):
-#         init.uniform_(self.initial_param, -math.sqrt(0.5), math.sqrt(0.5))
+        self.layers = nn.ParameterList()
+        # self.NSF_params = []
+        for jf in range(nflows):
+            params_jf = nn.Parameter(torch.Tensor(3 * K - 1))
+            self.reset_parameters(params_jf)
+            self.layers += [params_jf]
+            # self.layers += [base_network(self.num_cond, 3 * K - 1, hidden_dim)]
 
-#     def forward(self, x, cond_inp=None, mask=None):
-#         z = torch.zeros_like(x)
-#         # log_det = torch.zeros(z.shape[0])
-#         log_det_all = torch.zeros_like(x)
+        self.reset_parameters(self.initial_param)
 
-#         for i in range(self.dim):
-#             if i == 0:
-#                 out = self.layer_init(cond_inp)
-#                 mu, alpha = out[:, 0], out[:, 1]
-#                 # mu = -torch.exp(mu)
-#                 mu = (1 + nn.Tanh()(mu))
-#             else:
-#                 out = self.layers[i - 1](torch.cat([cond_inp, x[:, :i]], dim=1))
-#                 mu, alpha = out[:, 0], out[:, 1]
-#                 # mu = -torch.exp(mu)
-#                 mu = (1 + nn.Tanh()(mu))
+    def reset_parameters(self, params):
+        init.uniform_(params, 0, 1)
 
-#             z[:, i] = (x[:, i] - mu) / torch.exp(alpha)
-#             log_det_all[:, i] = -alpha
+    def get_gauss_func_mu_alpha(self):
+        out = self.initial_param
+        if self.ngauss == 1:
+            mu, alpha = out[0], out[1]
+            if self.mu_pos:
+                mu = (1 + nn.Tanh()(mu)) / 2
+            var = torch.exp(alpha)
+            return mu, var
+        else:
+            mu_all, alpha_all, pw_all_orig = (
+                out[0:self.ngauss], out[self.ngauss:2 * self.ngauss], out[2 * self.ngauss:3 * self.ngauss]
+                )
+            if self.mu_pos:
+                mu_all = (1 + nn.Tanh()(mu_all)) / 2
+            if self.base_dist_pwall == 'pl_exp':
+                # in this we have a power law and an exponential as a base distribution
+                pw_all_orig = torch.exp(pw_all_orig)
+                al = torch.exp(out[3*self.ngauss])
+                # put al between 0 and 2
+                al = 0. * nn.Tanh()(al)
+                bt = torch.exp(out[3*self.ngauss + 1]) + 1.
+                # we first predict the base distirbution given the alpha and beta of the form mu**alpha * exp(-beta*mu)
+                base_pws = torch.zeros(self.ngauss)
+                base_pws = base_pws.to('cuda')
+                for i in range(self.ngauss):
+                    base_pws[i] = torch.pow(mu_all[i], al) * torch.exp(-bt * mu_all[i])
+                
+                pw_all = torch.mul(pw_all_orig, base_pws)
+            else:
+                pw_all = pw_all_orig
 
-#             # try:
-#             #     self.mu_all_forward[i] = mu.detach().numpy()
-#             #     self.alpha_all_forward[i] = alpha.detach().numpy()
-#             # except:
-#             #     self.mu_all_forward[i] = mu[0].detach().numpy()
-#             #     self.alpha_all_forward[i] = alpha[0].detach().numpy()
-#         log_det_all_masked = log_det_all * mask
-#         log_det = torch.sum(log_det_all_masked, dim=1)
-#         return z, log_det
+            pw_all = nn.Softmax(dim=0)(pw_all)
+            var_all = torch.exp(alpha_all)
+            return mu_all, var_all, pw_all
 
-#     def inverse(self, z, cond_inp=None, mask=None):
-#         x = torch.zeros_like(z)
-#         x = x.to('cuda')
-#         z = z.to('cuda')
-#         log_det_all = torch.zeros_like(z)
-#         log_det_all = log_det_all.to('cuda')
-#         for i in range(self.dim):
-#             if i == 0:
-#                 out = self.layer_init(cond_inp)
-#                 mu, alpha = out[:, 0], out[:, 1]
-#                 # mu = -torch.exp(mu)
-#                 mu = (1 + nn.Tanh()(mu))
-#             else:
-#                 out = self.layers[i - 1](torch.cat([cond_inp, x[:, :i]], dim=1))
-#                 mu, alpha = out[:, 0], out[:, 1]
-#                 # mu = -torch.exp(mu)
-#                 mu = (1 + nn.Tanh()(mu))
+    def forward(self, x):
+        if self.base_dist in ["gauss", "halfgauss"]:
+            if self.ngauss == 1:
+                mu, var = self.get_gauss_func_mu_alpha()
+            else:
+                mu_all, var_all, pw_all = self.get_gauss_func_mu_alpha()
+        elif self.base_dist in ['weibull', 'gumbel']:
+            out = self.initial_param
+            mu, alpha = out[0], out[1]
+            if self.base_dist == 'weibull':
+                scale, conc = torch.exp(mu), torch.exp(alpha)
+            else:
+                if self.mu_pos:
+                    # mu = torch.exp(mu)
+                    mu = (1 + nn.Tanh()(mu)) / 2
+                sig = torch.exp(alpha)
+        else:
+            print('base_dist not recognized')
+            raise ValueError
+        if len(x.shape) > 1:
+            x = x[:, 0]
+        log_det_all = torch.zeros_like(x)
+        for jf in range(self.nflows):
+            out = self.layers[jf]
+            z = torch.zeros_like(x)
+            # log_det_all = torch.zeros(z.shape)
+            W, H, D = torch.split(out, self.K)
+            W, H = torch.softmax(W, dim=0), torch.softmax(H, dim=0)
+            W, H = 2 * self.B * W, 2 * self.B * H
+            D = F.softplus(D)
+            W = W.unsqueeze(0).repeat(x.shape[0], 1)
+            H = H.unsqueeze(0).repeat(x.shape[0], 1)
+            D = D.unsqueeze(0).repeat(x.shape[0], 1)
+            z, ld = unconstrained_RQS(x, W, H, D, inverse=False, tail_bound=self.B)
+            log_det_all += ld
+            x = z
 
-#             x[:, i] = mu + torch.exp(alpha) * z[:, i]
-#             log_det_all[:, i] = alpha
+        if self.base_dist == 'gauss':
+            if self.ngauss == 1:
+                logp = -0.5 * np.log(2 * np.pi) - 0.5 * torch.log(var) - 0.5 * (x - mu)**2 / var
+            else:
+                Li_all = torch.zeros(x.shape)
+                Li_all = Li_all.to('cuda')
+                for i in range(self.ngauss):
+                    Li_all += (
+                        pw_all[i] * (1 / torch.sqrt(2 * np.pi * var_all[i])) *
+                        torch.exp(-0.5 * ((x - mu_all[i])**2) / (var_all[i]))
+                        )
+                logp = torch.log(Li_all)
 
-#         log_det_all_masked = log_det_all * mask
-#         log_det = torch.sum(log_det_all_masked, dim=1)
-#         x *= mask
-#         return x, log_det
+        elif self.base_dist == 'halfgauss':
+            if self.ngauss == 1:
+                x = torch.exp(x - mu)
+                hf = HalfNormal((torch.sqrt(var)))
+                logp = hf.log_prob(x)
+
+        elif self.base_dist == 'weibull':
+            hf = Weibull(scale, conc)
+            logp = hf.log_prob(x)
+            # if there are any nans of infs, replace with -100
+            logp[torch.isnan(logp) | torch.isinf(logp)] = -100
+        elif self.base_dist == 'gumbel':
+            hf = Gumbel(mu, sig)
+            logp = hf.log_prob(x)
+            logp[torch.isnan(logp) | torch.isinf(logp)] = -100
+        else:
+            raise ValueError("Base distribution not supported")
+
+        logp = log_det_all + logp
+        return logp
+
+    def inverse(self, ntot:int):
+        if self.base_dist in ["gauss", "halfgauss"]:
+            if self.ngauss == 1:
+                mu, var = self.get_gauss_func_mu_alpha()
+            else:
+                mu_all, var_all, pw_all = self.get_gauss_func_mu_alpha()
+        elif self.base_dist in ['weibull', 'gumbel']:
+            out = self.initial_param
+            mu, alpha = out[0], out[1]
+            if self.base_dist == 'weibull':
+                scale, conc = torch.exp(mu), torch.exp(alpha)
+            else:
+                if self.mu_pos:
+                    # mu = torch.exp(mu)
+                    mu = (1 + nn.Tanh()(mu)) / 2
+                sig = torch.exp(alpha)
+        else:
+            print('base_dist not recognized')
+            raise ValueError
+
+        if self.base_dist == 'gauss':
+            if self.ngauss == 1:
+                x = mu + torch.randn(ntot) * torch.sqrt(var)
+            else:
+                counts = torch.distributions.multinomial.Multinomial(total_count=ntot, probs=pw_all).sample()
+                counts = counts.to('cuda')
+                # loop over gaussians
+                x = torch.empty(0, device=counts.device)
+                for k in range(self.ngauss):
+                    # find indices where count is non-zero for kth gaussian
+                    # ind = torch.nonzero(counts[k])
+                    count = counts[k]
+                    # if there are any indices, sample from kth gaussian
+                    if count > 0:
+                        # import pdb; pdb.set_trace()
+                        x_k = (mu_all[k] + torch.randn(int(count)).to('cuda') * torch.sqrt(var_all[k]))
+                        x = torch.cat((x, x_k), dim=0)
+
+        if self.base_dist == 'halfgauss':
+            if self.ngauss == 1:
+                x = torch.log(mu + torch.abs(torch.randn(ntot)) * torch.sqrt(var))
+
+        if self.base_dist == 'weibull':
+            hf = Weibull(scale, conc)
+            x = hf.sample([ntot])
+        if self.base_dist == 'gumbel':
+            hf = Gumbel(mu, sig)
+            x = hf.sample([ntot])
+
+        log_det_all = torch.zeros_like(x)
+        for jf in range(self.nflows):
+            ji = self.nflows - jf - 1
+            out = self.layers[ji]
+            z = torch.zeros_like(x)
+            W, H, D = torch.split(out, self.K)
+            W, H = torch.softmax(W, dim=0), torch.softmax(H, dim=0)
+            W, H = 2 * self.B * W, 2 * self.B * H
+            D = F.softplus(D)
+            # import pdb; pdb.set_trace()
+            W = W.unsqueeze(0).repeat(x.shape[0], 1)
+            H = H.unsqueeze(0).repeat(x.shape[0], 1)
+            D = D.unsqueeze(0).repeat(x.shape[0], 1)
+            z, ld = unconstrained_RQS(x, W, H, D, inverse=True, tail_bound=self.B)
+            log_det_all += ld
+            x = z
+
+        # x *= mask[:, 0]
+        return x, log_det_all
+
+    def sample(self, ntot):
+        x, _ = self.inverse(ntot)
+        return x

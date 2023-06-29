@@ -199,6 +199,7 @@ class COMBINED_Model(nn.Module):
         nbatches = cond_x.shape[0]
         Ntot_samp_out, M1_samp_out, M_diff_samp_out = [], [], []
         mask_tensor_M1_samp_out, mask_tensor_Mdiff_samp_out = [], []
+        cond_inp_M1_out = []
         for jb in range(nbatches):
             cond_out = self.conv_layers(cond_x[jb])
             cond_out = torch.cat((cond_out, cond_x_nsh[jb]), dim=1)
@@ -245,7 +246,7 @@ class COMBINED_Model(nn.Module):
             # import pdb; pdb.set_trace()
 
             if use_truth_M1:
-                mask_tensor_M1_samp = (mask_M1_truth)[jb, ...]
+                mask_tensor_M1_samp = (mask_M1_truth)[jb, ...][None, ...].T
                 mask_tensor_M1_samp = mask_tensor_M1_samp.float().cuda()
 
             else:
@@ -274,12 +275,14 @@ class COMBINED_Model(nn.Module):
             cond_inp_M1 = torch.cat([Nhalo_conditional, cond_out], dim=1)
             if self.sep_M1_cond:
                 cond_inp_M1 = self.cond_M1_layer(cond_inp_M1)
+            cond_inp_M1_out.append(cond_inp_M1)
+                
             # print(Ntot_samp.shape,cond_inp_M1.shape, mask_tensor_M1_samp.shape)
             if train_M1:
                 M1_samp, _ = self.M1_model.inverse(cond_inp_M1, mask_tensor_M1_samp)
             else:
                 # M1_samp = None
-                M1_samp = M1_truth[jb, ...]
+                M1_samp = M1_truth[jb, ...][:,0]
             M1_samp_out.append(M1_samp)
 
             if use_truth_M1:
@@ -298,7 +301,11 @@ class COMBINED_Model(nn.Module):
             else:
                 M_diff_samp = Mdiff_truth[jb, ...]
             M_diff_samp_out.append(M_diff_samp)
+
+            # import pdb; pdb.set_trace()
+
         # if not train_M1:
         # M1_samp_out = M1_truth
 
-        return Ntot_samp_out, M1_samp_out, M_diff_samp_out, mask_tensor_M1_samp_out, mask_tensor_Mdiff_samp_out
+        # return Ntot_samp_out, M1_samp_out, M_diff_samp_out, mask_tensor_M1_samp_out, mask_tensor_Mdiff_samp_out
+        return Ntot_samp_out, M1_samp_out, M_diff_samp_out, mask_tensor_M1_samp_out, mask_tensor_Mdiff_samp_out, cond_inp_M1_out
