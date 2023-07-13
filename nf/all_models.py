@@ -938,3 +938,42 @@ class NSF_M_all_uncond(nn.Module):
     def sample(self, ntot):
         x, _ = self.inverse(ntot)
         return x
+
+
+
+class M1_reg_model(nn.Module):
+    def __init__(
+    self,
+    dim=1,
+    hidden_dim=8,
+    num_cond=0):
+        super().__init__()
+        self.dim = dim
+        self.num_cond = num_cond
+        # self.layer_reg = base_network(self.num_cond, 1, hidden_dim)
+        in_dim = self.num_cond
+        out_dim = 1
+        self.network = nn.Sequential(
+            nn.Linear(in_dim, hidden_dim),
+            # nn.Tanh(),
+            nn.LeakyReLU(negative_slope=0.05),
+            nn.Linear(hidden_dim, hidden_dim//2),
+            # nn.Tanh(),
+            nn.LeakyReLU(negative_slope=0.05),
+            nn.Linear(hidden_dim//2, hidden_dim//4),
+            # nn.Tanh(),            
+            nn.LeakyReLU(negative_slope=0.05),
+            nn.Linear(hidden_dim//4, out_dim),
+            )
+
+        # self.reset_parameters()
+
+    
+    def forward(self, cond_inp=None):
+        out = self.network(cond_inp)
+        return out
+
+    def inverse(self, cond_inp=None, mask=None):
+        out = self.network(cond_inp)
+        out *= mask
+        return out[:,0]

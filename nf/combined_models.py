@@ -48,12 +48,14 @@ class COMBINED_Model(nn.Module):
         sep_Ntot_cond=False,
         sep_M1_cond=False,
         sep_Mdiff_cond=False,
+        M1reg_model=None,
         ):
         super().__init__()
         self.priors_all = priors_all
         self.M1_model = M1_model
         self.Ntot_model = Ntot_model
         self.Mdiff_model = Mdiff_model
+        self.M1reg_model = M1reg_model
         self.nbatch = nbatch
         self.nout = nout
         self.ninp = ninp
@@ -93,14 +95,16 @@ class COMBINED_Model(nn.Module):
         Nhalos_truth_all=None,
         use_Ntot_samples=False,
         use_M1_samples=False,
+        reg_M1=False,
         train_Ntot=False,
         train_M1=False,
         train_Mdiff=False,
         ):
         nbatches = cond_x.shape[0]
-        logP_Ntot = torch.zeros(1, device='cuda')
-        logP_M1 = torch.zeros(1, device='cuda')
-        logP_Mdiff = torch.zeros(1, device='cuda')
+        loss_Ntot = torch.zeros(1, device='cuda')
+        loss_M1 = torch.zeros(1, device='cuda')
+        loss_M1reg = torch.zeros(1, device='cuda')
+        loss_Mdiff = torch.zeros(1, device='cuda')
         for jb in range(nbatches):
             cond_out = self.conv_layers(cond_x[jb])
             cond_out = torch.cat((cond_out, cond_x_nsh[jb]), dim=1)
@@ -112,9 +116,9 @@ class COMBINED_Model(nn.Module):
 
             if train_Ntot:
                 if jb == 0:
-                    logP_Ntot = self.Ntot_model.forward(x_Ntot[jb], cond_out_Ntot)
+                    loss_Ntot = -self.Ntot_model.forward(x_Ntot[jb], cond_out_Ntot)
                 else:
-                    logP_Ntot += self.Ntot_model.forward(x_Ntot[jb], cond_out_Ntot)
+                    loss_Ntot += -self.Ntot_model.forward(x_Ntot[jb], cond_out_Ntot)
 
                 if use_Ntot_samples:
                     Ntot_samp = np.maximum(np.round(self.Ntot_model.inverse(cond_out_Ntot).detach().numpy()) - 1,
@@ -149,14 +153,26 @@ class COMBINED_Model(nn.Module):
                 mask_Mdiff_truth = mask_Mdiff_truth_all[jb].to('cuda')
                 mask_M1_truth = mask_M1_truth_all[jb].to('cuda')
 
-            if train_M1:
+
+
+            if reg_M1 or train_M1:
                 cond_inp_M1 = torch.cat([Nhalos_truth, cond_out], dim=1)
                 if self.sep_M1_cond:
                     cond_inp_M1 = self.cond_M1_layer(cond_inp_M1)
+
+            if reg_M1:
                 if jb == 0:
-                    logP_M1 = (self.M1_model.forward(x_M1[jb], cond_inp_M1)) * mask_M1_truth
+                    M1_samp_reg = self.M1reg_model.forward(cond_inp_M1)
+                    loss_M1reg = ((M1_samp_reg - x_M1[jb]) ** 2)[:,0] * mask_M1_truth
                 else:
-                    logP_M1 += (self.M1_model.forward(x_M1[jb], cond_inp_M1)) * mask_M1_truth
+                    M1_samp_reg = self.M1reg_model.forward( cond_inp_M1)
+                    loss_M1reg += ((M1_samp_reg - x_M1[jb]) ** 2)[:,0] * mask_M1_truth
+                
+            if train_M1:
+                if jb == 0:
+                    loss_M1 = -(self.M1_model.forward(x_M1[jb], cond_inp_M1)) * mask_M1_truth
+                else:
+                    loss_M1 += -(self.M1_model.forward(x_M1[jb], cond_inp_M1)) * mask_M1_truth
                 if use_M1_samples:
                     M1_samp = self.M1_model.inverse(cond_inp_M1, mask_M1_truth).detach().numpy()
                     M1_samp = np.maximum(M1_samp, 0)
@@ -173,10 +189,10 @@ class COMBINED_Model(nn.Module):
                 if self.sep_Mdiff_cond:
                     cond_inp_Mdiff = self.cond_Mdiff_layer(cond_inp_Mdiff)
                 if jb == 0:
-                    logP_Mdiff = self.Mdiff_model.forward(x_Mdiff[jb], cond_inp_Mdiff, mask_Mdiff_truth)
+                    loss_Mdiff = -self.Mdiff_model.forward(x_Mdiff[jb], cond_inp_Mdiff, mask_Mdiff_truth)
                 else:
-                    logP_Mdiff += self.Mdiff_model.forward(x_Mdiff[jb], cond_inp_Mdiff, mask_Mdiff_truth)
-        loss = torch.mean(-logP_Ntot - logP_M1 - logP_Mdiff)
+                    loss_Mdiff += -self.Mdiff_model.forward(x_Mdiff[jb], cond_inp_Mdiff, mask_Mdiff_truth)
+        loss = torch.mean(loss_Ntot + loss_M1 + loss_M1reg + loss_Mdiff)
 
         return loss
 
@@ -195,6 +211,7 @@ class COMBINED_Model(nn.Module):
         train_Ntot=False,
         train_M1=False,
         train_Mdiff=False,
+        reg_M1=False,
         ):
         nbatches = cond_x.shape[0]
         Ntot_samp_out, M1_samp_out, M_diff_samp_out = [], [], []
@@ -278,11 +295,15 @@ class COMBINED_Model(nn.Module):
             cond_inp_M1_out.append(cond_inp_M1)
                 
             # print(Ntot_samp.shape,cond_inp_M1.shape, mask_tensor_M1_samp.shape)
+            if reg_M1:
+                M1_samp = self.M1reg_model.inverse(cond_inp_M1, mask_tensor_M1_samp)
+
             if train_M1:
                 M1_samp, _ = self.M1_model.inverse(cond_inp_M1, mask_tensor_M1_samp)
             else:
                 # M1_samp = None
-                M1_samp = M1_truth[jb, ...][:,0]
+                if not reg_M1:
+                    M1_samp = M1_truth[jb, ...][:,0]
             M1_samp_out.append(M1_samp)
 
             if use_truth_M1:
