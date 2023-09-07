@@ -48,6 +48,9 @@ class COMBINED_Model(nn.Module):
         sep_Ntot_cond=False,
         sep_M1_cond=False,
         sep_Mdiff_cond=False,
+        num_cond_Ntot=None,
+        num_cond_M1=None,
+        num_cond_Mdiff=None,
         M1reg_model=None,
         ):
         super().__init__()
@@ -77,12 +80,18 @@ class COMBINED_Model(nn.Module):
         self.sep_M1_cond = sep_M1_cond
         self.sep_Mdiff_cond = sep_Mdiff_cond
         if self.sep_Ntot_cond:
-            self.cond_Ntot_layer = FCNN(nout + ninp, nout + ninp, nout + ninp)
+            if num_cond_Ntot is None:
+                num_cond_Ntot = nout + ninp
+            self.cond_Ntot_layer = FCNN(num_cond_Ntot, num_cond_Ntot, num_cond_Ntot)
         if self.sep_M1_cond:
+            if num_cond_M1 is None:
+                num_cond_M1 = nout + ninp + 1
             # self.cond_M1_layer = FCNN(nout + ninp + 1, nout + ninp + 1, nout + ninp + 1)
-            self.cond_M1_layer = FCNN(nout + ninp + 3, nout + ninp + 3, nout + ninp + 3)            
+            self.cond_M1_layer = FCNN(num_cond_M1, num_cond_M1, num_cond_M1)            
         if self.sep_Mdiff_cond:
-            self.cond_Mdiff_layer = FCNN(nout + ninp + 2, nout + ninp + 2, nout + ninp + 2)
+            if num_cond_Mdiff is None:
+                num_cond_Mdiff = nout + ninp + 2
+            self.cond_Mdiff_layer = FCNN(num_cond_Mdiff, num_cond_Mdiff, num_cond_Mdiff)
 
     def forward(
         self,
@@ -178,7 +187,7 @@ class COMBINED_Model(nn.Module):
                 else:
                     M1_samp_reg = self.M1reg_model.forward( cond_inp_M1)
                     loss_M1reg += ((M1_samp_reg - x_M1[jb]) ** 2)[:,0] * mask_M1_truth
-                
+            
             if train_M1:
                 if jb == 0:
                     # import pdb; pdb.set_trace()

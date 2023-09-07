@@ -116,10 +116,10 @@ if cond_sim == 'fastpm':
 else:
     return_dict_train_FP = None
 
-
+num_cond_Ntot = num_cond
 model_Ntot = SumGaussModel(
     hidden_dim=hidden_dim_MAF,
-    num_cond=num_cond,
+    num_cond=num_cond_Ntot,
     ngauss=return_dict_train['ngauss_Nhalo'],
     mu_all=return_dict_train['mu_all'],
     sig_all=return_dict_train['sig_all'],
@@ -163,12 +163,13 @@ model_M1 = NSF_M1_CNNcond(
     )
 
 ndim_diff = return_dict_train['M_diff_halos_all_norm_masked'][0].shape[2]
+num_cond_Mdiff = num_cond + 2
 model_Mdiff = NSF_Mdiff_CNNcond(
     dim=ndim_diff,
     K=K_Mdiff,
     B=B_Mdiff,
     hidden_dim=hidden_dim_MAF,
-    num_cond=num_cond + 2,
+    num_cond=num_cond_Mdiff,
     nflows=nflows_Mdiff_NSF,
     base_dist=base_dist_Mdiff,
     mu_pos=True
@@ -195,6 +196,9 @@ model = COMBINED_Model(
     sep_Ntot_cond=True,
     sep_M1_cond=True,
     sep_Mdiff_cond=True,
+    num_cond_Ntot = num_cond_Ntot,
+    num_cond_M1 = num_cond_M1,
+    num_cond_Mdiff = num_cond_Mdiff
     )
 
 model.to(dev)
@@ -304,8 +308,8 @@ nepochs_all = config_train['nepochs_all']
 
 nepochs_array = [nepochs_Ntot_only, nepochs_Ntot_M1_only, nepochs_all]
 train_Ntot_array = [1, 1, 1]
-train_M1_array = [0,1,1]
-train_Mdiff_array = [0,0,1]
+train_M1_array = [0, 1, 1]
+train_Mdiff_array = [0, 0, 1]
 
 
 for jn in range(len(nepochs_array)):
