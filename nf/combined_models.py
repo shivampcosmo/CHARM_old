@@ -79,7 +79,8 @@ class COMBINED_Model(nn.Module):
         if self.sep_Ntot_cond:
             self.cond_Ntot_layer = FCNN(nout + ninp, nout + ninp, nout + ninp)
         if self.sep_M1_cond:
-            self.cond_M1_layer = FCNN(nout + ninp + 1, nout + ninp + 1, nout + ninp + 1)
+            # self.cond_M1_layer = FCNN(nout + ninp + 1, nout + ninp + 1, nout + ninp + 1)
+            self.cond_M1_layer = FCNN(nout + ninp + 3, nout + ninp + 3, nout + ninp + 3)            
         if self.sep_Mdiff_cond:
             self.cond_Mdiff_layer = FCNN(nout + ninp + 2, nout + ninp + 2, nout + ninp + 2)
 
@@ -99,7 +100,14 @@ class COMBINED_Model(nn.Module):
         train_Ntot=False,
         train_M1=False,
         train_Mdiff=False,
+        x_Mdiff_FP=None,
+        x_M1_FP=None,
+        x_Ntot_FP=None,
+        Nhalos_truth_all_FP=None,
+        mask_Mdiff_truth_all_FP=None,
+        mask_M1_truth_all_FP=None
         ):
+        
         nbatches = cond_x.shape[0]
         loss_Ntot = torch.zeros(1, device='cuda')
         loss_M1 = torch.zeros(1, device='cuda')
@@ -157,9 +165,12 @@ class COMBINED_Model(nn.Module):
 
             if reg_M1 or train_M1:
                 cond_inp_M1 = torch.cat([Nhalos_truth, cond_out], dim=1)
+                if x_M1_FP is not None:
+                    cond_inp_M1 = torch.cat([cond_inp_M1, x_M1_FP[jb]], dim=1)
+                if mask_M1_truth_all_FP is not None:
+                    cond_inp_M1 = torch.cat([cond_inp_M1, mask_M1_truth_all_FP[jb][:,None]], dim=1)
                 if self.sep_M1_cond:
                     cond_inp_M1 = self.cond_M1_layer(cond_inp_M1)
-
             if reg_M1:
                 if jb == 0:
                     M1_samp_reg = self.M1reg_model.forward(cond_inp_M1)
@@ -170,6 +181,7 @@ class COMBINED_Model(nn.Module):
                 
             if train_M1:
                 if jb == 0:
+                    # import pdb; pdb.set_trace()
                     loss_M1 = -(self.M1_model.forward(x_M1[jb], cond_inp_M1)) * mask_M1_truth
                 else:
                     loss_M1 += -(self.M1_model.forward(x_M1[jb], cond_inp_M1)) * mask_M1_truth
@@ -212,6 +224,12 @@ class COMBINED_Model(nn.Module):
         train_M1=False,
         train_Mdiff=False,
         reg_M1=False,
+        x_Mdiff_FP=None,
+        x_M1_FP=None,
+        x_Ntot_FP=None,
+        Nhalos_truth_all_FP=None,
+        mask_Mdiff_truth_all_FP=None,
+        mask_M1_truth_all_FP=None        
         ):
         nbatches = cond_x.shape[0]
         Ntot_samp_out, M1_samp_out, M_diff_samp_out = [], [], []
@@ -230,7 +248,7 @@ class COMBINED_Model(nn.Module):
                 Ntot_samp = np.maximum(np.round(Ntot_samp_tensor.cpu().detach().numpy()) - 1, 0).astype(int)
             else:
                 # Ntot_samp = torch.Tensor(Nhalos_truth)
-                Ntot_samp = np.maximum(np.round(Nhalos_truth.cpu().detach().numpy()) - 1, 0).astype(int)
+                Ntot_samp = np.maximum(np.round(Nhalos_truth[jb,...].cpu().detach().numpy()) - 1, 0).astype(int)
                 # Ntot_samp = Nhalos_truth.cpu().detach().numpy()
             Ntot_samp_out.append(Ntot_samp)
             
@@ -290,6 +308,10 @@ class COMBINED_Model(nn.Module):
                     raise ValueError('Must use truth Nhalo if not training Ntot')
 
             cond_inp_M1 = torch.cat([Nhalo_conditional, cond_out], dim=1)
+            if x_M1_FP is not None:
+                cond_inp_M1 = torch.cat([cond_inp_M1, x_M1_FP[jb]], dim=1)
+            if mask_M1_truth_all_FP is not None:
+                cond_inp_M1 = torch.cat([cond_inp_M1, mask_M1_truth_all_FP[jb][:,None]], dim=1)            
             if self.sep_M1_cond:
                 cond_inp_M1 = self.cond_M1_layer(cond_inp_M1)
             cond_inp_M1_out.append(cond_inp_M1)
@@ -297,7 +319,7 @@ class COMBINED_Model(nn.Module):
             # print(Ntot_samp.shape,cond_inp_M1.shape, mask_tensor_M1_samp.shape)
             if reg_M1:
                 M1_samp = self.M1reg_model.inverse(cond_inp_M1, mask_tensor_M1_samp)
-
+            # import pdb; pdb.set_trace()
             if train_M1:
                 M1_samp, _ = self.M1_model.inverse(cond_inp_M1, mask_tensor_M1_samp)
             else:

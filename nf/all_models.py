@@ -9,6 +9,35 @@ import torch.nn.functional as F
 from nf.utils import unconstrained_RQS
 from torch.distributions import HalfNormal, Weibull, Gumbel
 
+def interpolate(x: torch.Tensor, xp: torch.Tensor, fp: torch.Tensor) -> torch.Tensor:
+    """One-dimensional linear interpolation for monotonically increasing sample
+    points.
+
+    Returns the one-dimensional piecewise linear interpolant to a function with
+    given discrete data points :math:`(xp, fp)`, evaluated at :math:`x`.
+
+    Args:
+        x: the :math:`x`-coordinates at which to evaluate the interpolated
+            values.
+        xp: the :math:`x`-coordinates of the data points, must be increasing.
+        fp: the :math:`y`-coordinates of the data points, same length as `xp`.
+
+    Returns:
+        the interpolated values, same size as `x`.
+    """
+    m = (fp[:,1:] - fp[:,:-1]) / (xp[:,1:] - xp[:,:-1])  #slope
+    b = fp[:, :-1] - (m.mul(xp[:, :-1]) )
+
+    indicies = torch.sum(torch.ge(x[:, :, None], xp[:, None, :]), -1) - 1  #torch.ge:  x[i] >= xp[i] ? true: false
+    indicies = torch.clamp(indicies, 0, m.shape[-1] - 1)
+
+    line_idx = torch.linspace(0, indicies.shape[0], 1, device=indicies.device).to(torch.long)
+    line_idx = line_idx.expand(indicies.shape)
+    # idx = torch.cat([line_idx, indicies] , 0)
+    return m[line_idx, indicies].mul(x) + b[line_idx, indicies]
+
+
+
 
 class FCNN(nn.Module):
     """
@@ -214,8 +243,12 @@ class NSF_M1_CNNcond(nn.Module):
         nflows=1,
         ngauss=1,
         base_dist="gauss",
+        mu_all=None,
         mu_pos=False,
-        base_dist_pwall = 'pl_exp'
+        base_dist_pwall=None,
+        lgM_rs_tointerp=None,
+        hmf_pdf_tointerp=None,
+        hmf_cdf_tointerp=None        
         ):
         super().__init__()
         self.dim = dim
@@ -234,13 +267,27 @@ class NSF_M1_CNNcond(nn.Module):
                 self.layer_init_gauss = base_network(self.num_cond, 2, hidden_dim)
             else:
                 if self.base_dist_pwall == 'pl_exp':
-                    self.layer_init_gauss = base_network(self.num_cond, 3 * self.ngauss+2, hidden_dim)
+                    if mu_all is not None:
+                        self.mu_all = torch.tensor(mu_all, device='cuda')
+                        self.layer_init_gauss = base_network(self.num_cond, 2 * self.ngauss+2, hidden_dim)
+                    else:
+                        self.mu_all = None
+                        self.layer_init_gauss = base_network(self.num_cond, 3 * self.ngauss+2, hidden_dim)
                 else:
-                    self.layer_init_gauss = base_network(self.num_cond, 3 * self.ngauss, hidden_dim)
+                    if mu_all is not None:
+                        self.mu_all = torch.tensor(mu_all, device='cuda')
+                        self.layer_init_gauss = base_network(self.num_cond, 2 * self.ngauss, hidden_dim)
+                    else:
+                        self.mu_all = None
+                        self.layer_init_gauss = base_network(self.num_cond, 3 * self.ngauss, hidden_dim)
         elif self.base_dist == 'weibull':
             self.layer_init_gauss = base_network(self.num_cond, 2, hidden_dim)
         elif self.base_dist == 'gumbel':
             self.layer_init_gauss = base_network(self.num_cond, 2, hidden_dim)
+        elif self.base_dist == 'physical_hmf':
+            self.lgM_rs_tointerp = torch.Tensor(np.array([lgM_rs_tointerp])).to('cuda')
+            self.hmf_pdf_tointerp = torch.log(torch.Tensor(np.array([hmf_pdf_tointerp])).to('cuda'))
+            self.hmf_cdf_tointerp = torch.Tensor(np.array([hmf_cdf_tointerp])).to('cuda')
         else:
             print('base_dist not recognized')
             raise ValueError
@@ -249,10 +296,13 @@ class NSF_M1_CNNcond(nn.Module):
         for jf in range(nflows):
             self.layers += [base_network(self.num_cond, 3 * K - 1, hidden_dim)]
 
-        self.reset_parameters()
+        try:
+            self.reset_parameters(self.initial_param, -1, 1)
+        except:
+            pass
 
-    def reset_parameters(self):
-        init.uniform_(self.init_param, -1 / 2, 1 / 2)
+    def reset_parameters(self, params, min=0, max=1):
+        init.uniform_(params, min, max)
 
     def get_gauss_func_mu_alpha(self, cond_inp=None):
         out = self.layer_init_gauss(cond_inp)
@@ -263,9 +313,18 @@ class NSF_M1_CNNcond(nn.Module):
             var = torch.exp(alpha)
             return mu, var
         else:
-            mu_all, alpha_all, pw_all_orig = (
-                out[:, 0:self.ngauss], out[:, self.ngauss:2 * self.ngauss], out[:, 2 * self.ngauss:3 * self.ngauss]
-                )
+            if self.mu_all is not None:
+                # alpha_all, pw_all_orig = (
+                #     out[:, 0:self.ngauss], out[:, self.ngauss:2 * self.ngauss]
+                #     )
+                alpha_all = out[:, 0:self.ngauss]
+                pw_all_orig = out[:, self.ngauss:2 * self.ngauss]
+                mu_all = self.mu_all.reshape(1, self.ngauss).repeat(out.shape[0], 1)
+                # import pdb; pdb.set_trace()
+            else:
+                mu_all, alpha_all, pw_all_orig = (
+                    out[:, 0:self.ngauss], out[:, self.ngauss:2 * self.ngauss], out[:, 2 * self.ngauss:3 * self.ngauss]
+                    )
             if self.mu_pos:
                 mu_all = (1 + nn.Tanh()(mu_all)) / 2
             if self.base_dist_pwall == 'pl_exp':
@@ -287,6 +346,7 @@ class NSF_M1_CNNcond(nn.Module):
 
             pw_all = nn.Softmax(dim=1)(pw_all)
             var_all = torch.exp(alpha_all)
+            # import pdb; pdb.set_trace()
             return mu_all, var_all, pw_all
 
     def forward(self, x, cond_inp=None):
@@ -305,10 +365,12 @@ class NSF_M1_CNNcond(nn.Module):
                     # mu = torch.exp(mu)
                     mu = (1 + nn.Tanh()(mu)) / 2
                 sig = torch.exp(alpha)
+        elif self.base_dist == 'physical_hmf':
+            pass                
         else:
             print('base_dist not recognized')
             raise ValueError
-
+        # import pdb; pdb.set_trace()
         if len(x.shape) > 1:
             x = x[:, 0]
         log_det_all = torch.zeros_like(x)
@@ -319,7 +381,8 @@ class NSF_M1_CNNcond(nn.Module):
             W, H, D = torch.split(out, self.K, dim=1)
             W, H = torch.softmax(W, dim=1), torch.softmax(H, dim=1)
             W, H = 2 * self.B * W, 2 * self.B * H
-            D = F.softplus(D)
+            # D = F.softplus(D)
+            D = 2. * F.sigmoid(D)
             z, ld = unconstrained_RQS(x, W, H, D, inverse=False, tail_bound=self.B)
             log_det_all += ld
             x = z
@@ -352,6 +415,14 @@ class NSF_M1_CNNcond(nn.Module):
             hf = Gumbel(mu, sig)
             logp = hf.log_prob(x)
             logp[torch.isnan(logp) | torch.isinf(logp)] = -100
+        elif self.base_dist == 'physical_hmf':
+            # use the interpolation function to get the logp
+            # add another axis to x
+            # import pdb; pdb.set_trace()
+            logp = (interpolate(x[None,:], self.lgM_rs_tointerp, self.hmf_pdf_tointerp))[0,:]
+            # import pdb; pdb.set_trace()
+            logp[torch.isnan(logp) | torch.isinf(logp)] = -100
+
         else:
             raise ValueError("Base distribution not supported")
 
@@ -374,10 +445,11 @@ class NSF_M1_CNNcond(nn.Module):
                     # mu = torch.exp(mu)
                     mu = (1 + nn.Tanh()(mu)) / 2
                 sig = torch.exp(alpha)
+        elif self.base_dist == 'physical_hmf':
+            pass                
         else:
             print('base_dist not recognized')
             raise ValueError
-
         if self.base_dist == 'gauss':
             if self.ngauss == 1:
                 x = mu + torch.randn(cond_inp.shape[0]) * torch.sqrt(var)
@@ -394,16 +466,22 @@ class NSF_M1_CNNcond(nn.Module):
                         x_k = (mu_all[ind, k][:, 0] + torch.randn(ind.shape[0]).to('cuda') * torch.sqrt(var_all[ind, k])[:, 0])
                         x = torch.cat((x, x_k), dim=0)
 
-        if self.base_dist == 'halfgauss':
+        elif self.base_dist == 'halfgauss':
             if self.ngauss == 1:
                 x = torch.log(mu + torch.abs(torch.randn(cond_inp.shape[0])) * torch.sqrt(var))
 
-        if self.base_dist == 'weibull':
+        elif self.base_dist == 'weibull':
             hf = Weibull(scale, conc)
             x = hf.sample()
-        if self.base_dist == 'gumbel':
+        elif self.base_dist == 'gumbel':
             hf = Gumbel(mu, sig)
             x = hf.sample()
+        elif self.base_dist == 'physical_hmf':
+            u = torch.rand(cond_inp.shape[0])
+            u = u.to('cuda')
+            # import pdb; pdb.set_trace()
+            # x = interpolate(torch.log(u)[None,:], torch.log(self.hmf_cdf_tointerp[:,1:]), self.lgM_rs_tointerp[:,1:])[0,:]
+            x = interpolate((u)[None,:], (self.hmf_cdf_tointerp[:,1:]), self.lgM_rs_tointerp[:,1:])[0,:]
 
         log_det_all = torch.zeros_like(x)
         for jf in range(self.nflows):
@@ -413,7 +491,8 @@ class NSF_M1_CNNcond(nn.Module):
             W, H, D = torch.split(out, self.K, dim=1)
             W, H = torch.softmax(W, dim=1), torch.softmax(H, dim=1)
             W, H = 2 * self.B * W, 2 * self.B * H
-            D = F.softplus(D)
+            # D = F.softplus(D)
+            D = 2. * F.sigmoid(D)
             z, ld = unconstrained_RQS(x, W, H, D, inverse=True, tail_bound=self.B)
             log_det_all += ld
             x = z
@@ -712,7 +791,10 @@ class NSF_M_all_uncond(nn.Module):
         ngauss=1,
         base_dist="gauss",
         mu_pos=False,
-        base_dist_pwall = 'pl_exp'
+        base_dist_pwall = 'pl_exp',
+        lgM_rs_tointerp=None,
+        hmf_pdf_tointerp=None,
+        hmf_cdf_tointerp=None
         ):
         super().__init__()
         self.dim = dim
@@ -743,6 +825,10 @@ class NSF_M_all_uncond(nn.Module):
         elif self.base_dist == 'gumbel':
             self.initial_param = nn.Parameter(torch.Tensor(2))
             # self.layer_init_gauss = base_network(self.num_cond, 2, hidden_dim)
+        elif self.base_dist == 'physical_hmf':
+            self.lgM_rs_tointerp = torch.Tensor(np.array([lgM_rs_tointerp])).to('cuda')
+            self.hmf_pdf_tointerp = torch.log(torch.Tensor(np.array([hmf_pdf_tointerp])).to('cuda'))
+            self.hmf_cdf_tointerp = torch.Tensor(np.array([hmf_cdf_tointerp])).to('cuda')
         else:
             print('base_dist not recognized')
             raise ValueError
@@ -751,14 +837,16 @@ class NSF_M_all_uncond(nn.Module):
         # self.NSF_params = []
         for jf in range(nflows):
             params_jf = nn.Parameter(torch.Tensor(3 * K - 1))
-            self.reset_parameters(params_jf)
+            self.reset_parameters(params_jf, -10, 10)
             self.layers += [params_jf]
             # self.layers += [base_network(self.num_cond, 3 * K - 1, hidden_dim)]
+        try:
+            self.reset_parameters(self.initial_param, -1, 1)
+        except:
+            pass
 
-        self.reset_parameters(self.initial_param)
-
-    def reset_parameters(self, params):
-        init.uniform_(params, 0, 1)
+    def reset_parameters(self, params, min=0, max=1):
+        init.uniform_(params, min, max)
 
     def get_gauss_func_mu_alpha(self):
         out = self.initial_param
@@ -811,6 +899,8 @@ class NSF_M_all_uncond(nn.Module):
                     # mu = torch.exp(mu)
                     mu = (1 + nn.Tanh()(mu)) / 2
                 sig = torch.exp(alpha)
+        elif self.base_dist == 'physical_hmf':
+            pass
         else:
             print('base_dist not recognized')
             raise ValueError
@@ -824,14 +914,18 @@ class NSF_M_all_uncond(nn.Module):
             W, H, D = torch.split(out, self.K)
             W, H = torch.softmax(W, dim=0), torch.softmax(H, dim=0)
             W, H = 2 * self.B * W, 2 * self.B * H
-            D = F.softplus(D)
+            # D = F.softplus(D)
+            D = 2. * F.sigmoid(D)
+            # import pdb; pdb.set_trace()
             W = W.unsqueeze(0).repeat(x.shape[0], 1)
             H = H.unsqueeze(0).repeat(x.shape[0], 1)
             D = D.unsqueeze(0).repeat(x.shape[0], 1)
             z, ld = unconstrained_RQS(x, W, H, D, inverse=False, tail_bound=self.B)
             log_det_all += ld
             x = z
-
+            # x = nn.Sigmoid()(x)
+        # x = nn.Sigmoid()(x)
+        # x = torch.exp(x)
         if self.base_dist == 'gauss':
             if self.ngauss == 1:
                 logp = -0.5 * np.log(2 * np.pi) - 0.5 * torch.log(var) - 0.5 * (x - mu)**2 / var
@@ -860,11 +954,17 @@ class NSF_M_all_uncond(nn.Module):
             hf = Gumbel(mu, sig)
             logp = hf.log_prob(x)
             logp[torch.isnan(logp) | torch.isinf(logp)] = -100
+        elif self.base_dist == 'physical_hmf':
+            # use the interpolation function to get the logp
+            # add another axis to x
+            logp = (interpolate(x[None,:], self.lgM_rs_tointerp, self.hmf_pdf_tointerp)[0,:])
+            # import pdb; pdb.set_trace()
+            logp[torch.isnan(logp) | torch.isinf(logp)] = -100
         else:
             raise ValueError("Base distribution not supported")
 
-        logp = log_det_all + logp
-        return logp
+        # logp = log_det_all + logp
+        return logp, log_det_all, x
 
     def inverse(self, ntot:int):
         if self.base_dist in ["gauss", "halfgauss"]:
@@ -882,6 +982,8 @@ class NSF_M_all_uncond(nn.Module):
                     # mu = torch.exp(mu)
                     mu = (1 + nn.Tanh()(mu)) / 2
                 sig = torch.exp(alpha)
+        elif self.base_dist == 'physical_hmf':
+            pass
         else:
             print('base_dist not recognized')
             raise ValueError
@@ -904,16 +1006,25 @@ class NSF_M_all_uncond(nn.Module):
                         x_k = (mu_all[k] + torch.randn(int(count)).to('cuda') * torch.sqrt(var_all[k]))
                         x = torch.cat((x, x_k), dim=0)
 
-        if self.base_dist == 'halfgauss':
+        elif self.base_dist == 'halfgauss':
             if self.ngauss == 1:
                 x = torch.log(mu + torch.abs(torch.randn(ntot)) * torch.sqrt(var))
 
-        if self.base_dist == 'weibull':
+        elif self.base_dist == 'weibull':
             hf = Weibull(scale, conc)
             x = hf.sample([ntot])
-        if self.base_dist == 'gumbel':
+        elif self.base_dist == 'gumbel':
             hf = Gumbel(mu, sig)
             x = hf.sample([ntot])
+        elif self.base_dist == 'physical_hmf':
+            u = torch.rand(ntot)
+            u = u.to('cuda')
+            # import pdb; pdb.set_trace()
+            # x = interpolate(torch.log(u)[None,:], torch.log(self.hmf_cdf_tointerp[:,1:]), self.lgM_rs_tointerp[:,1:])[0,:]
+            x = interpolate((u)[None,:], (self.hmf_cdf_tointerp[:,1:]), self.lgM_rs_tointerp[:,1:])[0,:]
+            # x = x.to('cuda')
+
+
 
         log_det_all = torch.zeros_like(x)
         for jf in range(self.nflows):
@@ -923,7 +1034,8 @@ class NSF_M_all_uncond(nn.Module):
             W, H, D = torch.split(out, self.K)
             W, H = torch.softmax(W, dim=0), torch.softmax(H, dim=0)
             W, H = 2 * self.B * W, 2 * self.B * H
-            D = F.softplus(D)
+            # D = F.softplus(D)
+            D = 2. * F.sigmoid(D)
             # import pdb; pdb.set_trace()
             W = W.unsqueeze(0).repeat(x.shape[0], 1)
             H = H.unsqueeze(0).repeat(x.shape[0], 1)
@@ -956,13 +1068,19 @@ class M1_reg_model(nn.Module):
         self.network = nn.Sequential(
             nn.Linear(in_dim, hidden_dim),
             # nn.Tanh(),
-            nn.LeakyReLU(negative_slope=0.05),
+            nn.LeakyReLU(negative_slope=0.5),
+            nn.Linear(hidden_dim, hidden_dim),
+            # nn.Tanh(),
+            nn.LeakyReLU(negative_slope=0.5),
+            nn.Linear(hidden_dim, hidden_dim),
+            # nn.Tanh(),
+            nn.LeakyReLU(negative_slope=0.5),                        
             nn.Linear(hidden_dim, hidden_dim//2),
             # nn.Tanh(),
-            nn.LeakyReLU(negative_slope=0.05),
+            nn.LeakyReLU(negative_slope=0.5),
             nn.Linear(hidden_dim//2, hidden_dim//4),
             # nn.Tanh(),            
-            nn.LeakyReLU(negative_slope=0.05),
+            nn.LeakyReLU(negative_slope=0.5),
             nn.Linear(hidden_dim//4, out_dim),
             )
 

@@ -21,15 +21,22 @@ class ResidualBlock(nn.Module):
             self.act2 = nn.Tanh()
         elif act == 'lrelu':
             self.act2 = nn.LeakyReLU(0.2)
+        
+        if nf_out != nf_inp:
+            self.linear = nn.Linear(nf_inp, nf_out, bias=False)
+        else:
+            self.linear = None
 
     def forward(self, x):
         out = self.conv1(x)
         out = self.act1(out)
         out = self.conv2(out)
-        return self.act2(out) + x[..., (self.ksize + 1) // 2:-(self.ksize + 1) // 2,
+        x_to_add = x[..., (self.ksize + 1) // 2:-(self.ksize + 1) // 2,
                                   (self.ksize + 1) // 2:-(self.ksize + 1) // 2,
                                   (self.ksize + 1) // 2:-(self.ksize + 1) // 2]
-
+        if self.linear is not None:
+            x_to_add = torch.moveaxis(self.linear(torch.moveaxis(x_to_add,1,4)),4,1)
+        return self.act2(out) + x_to_add
 
 class CNN3D_stackout(nn.Module):
     """
@@ -64,10 +71,10 @@ class CNN3D_stackout(nn.Module):
         for j in range(len(layers_types)):
             if j == 0:
                 ninp_j = self.ninp
+                nout_j = 2 * self.nfeature
+            elif j == 1:
+                ninp_j = 2 * self.nfeature
                 nout_j = 4 * self.nfeature
-            # elif j == 1:
-            #     ninp_j = 2 * self.nfeature
-            #     nout_j = 4 * self.nfeature
             else:
                 ninp_j = 4 * self.nfeature
                 nout_j = 4 * self.nfeature
