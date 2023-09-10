@@ -28,6 +28,7 @@ from tqdm import tqdm
 import yaml
 
 run_config_name = sys.argv[1]
+# run_config_name = 'run_test_128_condQ_pylianscic_200c_lgMmin5e13.yaml'
 
 with open("/mnt/home/spandey/ceph/AR_NPE/run_configs/" + run_config_name,"r") as file_object:
     config=yaml.load(file_object,Loader=yaml.SafeLoader)
@@ -94,7 +95,7 @@ num_cond = nout_cnn + ninp
 
 df_d_all_train, df_d_all_nsh_train, df_Mh_all_train, df_Nh_train = load_density_halo_data_NGP(
     ji_array, ns_d, nb, nf, nc, z_all, ns_h,sdir='/mnt/home/spandey/ceph/Quijote/data_NGP_self',
-    mass_type=mass_type, lgMmincutstr = lgMmincutstr
+    stype=stype, mass_type=mass_type, lgMmincutstr = lgMmincutstr
     )
 
 # # Prepare the density and halo data
@@ -116,15 +117,7 @@ if cond_sim == 'fastpm':
 else:
     return_dict_train_FP = None
 
-num_cond_Ntot = num_cond
-model_Ntot = SumGaussModel(
-    hidden_dim=hidden_dim_MAF,
-    num_cond=num_cond_Ntot,
-    ngauss=return_dict_train['ngauss_Nhalo'],
-    mu_all=return_dict_train['mu_all'],
-    sig_all=return_dict_train['sig_all'],
-    base_dist='pl_exp'    
-    )
+
 
 lgM_array = np.linspace(lgMmin, lgMmax, 1000)
 M_array = 10**lgM_array
@@ -141,8 +134,18 @@ hmf_pdf = hmf/int_val
 # define the cdf of the halo mass function
 hmf_cdf = np.zeros_like(hmf_pdf)
 for i in range(len(hmf_cdf)):
-    hmf_cdf[i] = sp.integrate.simps(hmf_cdf[:i+1], lgM_rescaled[:i+1])
+    hmf_cdf[i] = sp.integrate.simps(hmf_pdf[:i+1], lgM_rescaled[:i+1])
 
+
+num_cond_Ntot = num_cond
+model_Ntot = SumGaussModel(
+    hidden_dim=hidden_dim_MAF,
+    num_cond=num_cond_Ntot,
+    ngauss=return_dict_train['ngauss_Nhalo'],
+    mu_all=return_dict_train['mu_all'],
+    sig_all=return_dict_train['sig_all'],
+    base_dist='pl_exp'    
+    )
 
 num_cond_M1 = num_cond + 1
 # if conditioned on fastpm we will also give the fastpm fof M1 halos and its mask as conditional
@@ -208,35 +211,13 @@ optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
 loss_all_it = []
 loss_min = 1e20
-scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.5, patience=100, verbose=True, cooldown=100, min_lr=1e-8)
-
-save_bestfit_model_name = 'COND_HMF_CHECKPOINTS/TEST_FINALS_SIMPLE_BATCHED_model_save_nsim' + str(len(ji_array)) + \
-                            '_cond_sim_' + cond_sim + \
-                            '_nsd' + str(ns_d) + '_nc' + str(nc) + '_nsh' + str(ns_h) + '_mass_' + mass_type + \
-                            '_stype_' + stype + '_nsimperbatch' + str(nsims_per_batch) + '_nbatches' + str(nbatches_train)
-print(save_bestfit_model_name)
-try:
-    print('loading bestfit model')
-    bestfit_model = (torch.load(save_bestfit_model_name))
-    model.load_state_dict(bestfit_model['state_dict'])
-    optimizer.load_state_dict(bestfit_model['optimizer'])
-    scheduler.load_state_dict(bestfit_model['scheduler'])
-    loss_min = bestfit_model['loss_min']
-    loss = bestfit_model['loss']
-    lr = bestfit_model['lr']
-    epoch_tot_counter = bestfit_model['epoch_tot_counter']
-    for g in optimizer.param_groups:
-        g['lr'] = lr
-
-except:
-    print('no bestfit model found, running new')
-    pass
-    epoch_tot_counter = 0
+epoch_tot_counter = 0
+scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.5, patience=200, verbose=True, cooldown=200, min_lr=1e-8)
 
 from torch.utils.data import DataLoader, Dataset
 class LoadCustomData(Dataset):
     def __init__(self, return_dict, return_dict_FP, all_gpu=False):
-        if return_dict_train_FP is not None:
+        if return_dict_FP is not None:
             self.cond_tensor = torch.Tensor(np.array(return_dict_FP['df_d_all']))
             cond_nsh = np.moveaxis(np.array(return_dict_FP['df_d_all_nsh']), 2, 5)
             self.cond_tensor_nsh = torch.Tensor((cond_nsh)).reshape(-1, nsims_per_batch * (nax_h ** 3), ninp)
@@ -298,21 +279,53 @@ class LoadCustomData(Dataset):
 config_train = config['train_settings']
 batch_size = config_train['batch_size_DL']
 all_gpu = config_train['all_gpu']
+
+
+
+save_bestfit_model_name = 'TRAIN_ROCKSTAR_FOF/TEST_FINALS_SIMPLE_BATCHED_model_save_nsim' + str(len(ji_array)) + \
+                            '_cond_sim_' + cond_sim + \
+                            '_nsd' + str(ns_d) + '_nc' + str(nc) + '_nsh' + str(ns_h) + '_mass_' + mass_type + \
+                            '_stype_' + stype + '_nsimperbatch' + str(nsims_per_batch) + '_nbatches' + str(nbatches_train)
+print(save_bestfit_model_name)
+
+start_with_bestfit = config_train['start_with_bestfit']
+
+if start_with_bestfit:
+    try:
+        print('loading bestfit model')
+        bestfit_model = (torch.load(save_bestfit_model_name))
+        model.load_state_dict(bestfit_model['state_dict'])
+        optimizer.load_state_dict(bestfit_model['optimizer'])
+        scheduler.load_state_dict(bestfit_model['scheduler'])
+        loss_min = bestfit_model['loss_min']
+        loss = bestfit_model['loss']
+        lr = bestfit_model['lr']
+        epoch_tot_counter = bestfit_model['epoch_tot_counter']
+        for g in optimizer.param_groups:
+            g['lr'] = lr
+
+    except:
+        print('no bestfit model found, running new')
+        pass
+        epoch_tot_counter = 0
+
+
 dataset = LoadCustomData(return_dict_train, return_dict_train_FP, all_gpu=all_gpu)
-dataloader = DataLoader(dataset, batch_size=batch_size, pin_memory=1 - all_gpu, num_workers=10)
+dataloader = DataLoader(dataset, batch_size=batch_size, pin_memory=1 - all_gpu, num_workers=1)
 
 
 nepochs_Ntot_only = config_train['nepochs_Ntot_only']
 nepochs_Ntot_M1_only = config_train['nepochs_Ntot_M1_only']
 nepochs_all = config_train['nepochs_all']
 
+
 nepochs_array = [nepochs_Ntot_only, nepochs_Ntot_M1_only, nepochs_all]
 train_Ntot_array = [1, 1, 1]
-train_M1_array = [0, 1, 1]
+train_M1_array = [0, 1, 1 ]
 train_Mdiff_array = [0, 0, 1]
 
 
-for jn in range(len(nepochs_array)):
+for jn in (range(len(nepochs_array))):
     loss_min = 1e20
     torch.cuda.empty_cache()
     ninit = 0
@@ -323,6 +336,7 @@ for jn in range(len(nepochs_array)):
         train_Mdiff = train_Mdiff_array[jn]
 
         if jn > 0:
+            print('loading bestfit model')
             bestfit_model = (torch.load(save_bestfit_model_name))
             model.load_state_dict(bestfit_model['state_dict'])
             optimizer.load_state_dict(bestfit_model['optimizer'])
@@ -331,15 +345,16 @@ for jn in range(len(nepochs_array)):
             loss = bestfit_model['loss']
             lr = bestfit_model['lr']
             for g in optimizer.param_groups:
-                g['lr'] = lr
+                g['lr'] = learning_rate
 
-        for jt in (range(nepochs)):
+        for jt in tqdm(range(nepochs)):
             for jd in range(len(dataloader)):
                 torch.cuda.empty_cache()
                 optimizer.zero_grad()
                 cond_tensor_jd, cond_tensor_nsh_jd, mask_tensor_M1_train_jd, mask_tensor_Mdiff_train_jd, X_M1_jd, \
                     X_Nhalo_jd, X_Mdiff_jd, Nhalos_truth_tensor_jd, mask_tensor_M1_train_FP_jd, X_M1_FP_jd = next(iter(dataloader))
-                if mask_tensor_M1_train_FP_jd[0] == -9999:
+
+                if cond_sim == 'quijote':               
                     mask_tensor_M1_train_FP_jd = None
                     X_M1_FP_jd = None
                 
@@ -384,7 +399,7 @@ for jn in range(len(nepochs_array)):
                 optimizer.step()
             scheduler.step(loss)
             epoch_tot_counter += 1
-            if (np.mod(jt, int(nepochs / 25)) == 0) or (jt == nepochs - 1):
+            if (np.mod(jt, int(nepochs / 100)) == 0) or (jt == nepochs - 1):
                 if float(loss.cpu().detach().numpy()) < loss_min:
                     loss_min = float(loss.cpu().detach().numpy())
                     print('saving bf at:', ', with loss:', np.round(loss_min, 5), ', at epoch:', jt, 
@@ -398,5 +413,4 @@ for jn in range(len(nepochs_array)):
                     torch.save(
                         state, save_bestfit_model_name
                         )
-
 

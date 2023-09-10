@@ -34,7 +34,7 @@ sim_settings:
 
 network_settings:
   hidden_dim_MAF : 3
-  learning_rate : 0.01
+  learning_rate : 0.001
   K_M1 : 5
   B_M1 : 0.5
   nflows_M1_NSF : 2
@@ -54,6 +54,7 @@ network_settings:
 train_settings:
   batch_size_DL : 16
   all_gpu : False
-  nepochs_Ntot_only : 1000
-  nepochs_Ntot_M1_only : 1000
-  nepochs_all : 50000
+  nepochs_Ntot_only : 15000
+  nepochs_Ntot_M1_only : 10000
+  nepochs_all : 10000
+  start_with_bestfit : False

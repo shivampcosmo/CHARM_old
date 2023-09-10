@@ -68,14 +68,15 @@ def load_density_halo_data_NGP(
     ):
     # load the halo data
     # fname = sdir + '/' + str(ji) + '/halo_data_dict_' + str(nside_h) + '.pk'
-    for ji in ji_array:
+    for ji in range(len(ji_array)):
+        jsim = ji_array[ji]
         if 'fof' in mass_type:
             try:
-                fname = sdir + '/' + str(ji) + '/halos_subvol_res_' + str(nside_h) + '_z=' + str(0) + '.pk'
+                fname = sdir + '/' + str(jsim) + '/halos_subvol_res_' + str(nside_h) + '_z=' + str(0) + '.pk'
             except:
-                fname = sdir + '/' + str(ji) + '/halos_' + mass_type + '_lgMmincut_' + lgMmincutstr + '_subvol_res_' + str(nside_h) + '_z=' + str(0) + '.pk'
+                fname = sdir + '/' + str(jsim) + '/halos_' + mass_type + '_lgMmincut_' + lgMmincutstr + '_subvol_res_' + str(nside_h) + '_z=' + str(0) + '.pk'
         elif 'rockstar' in mass_type:
-            fname = sdir + '/' + str(ji) + '/halos_' + mass_type + '_lgMmincut_' + lgMmincutstr + '_subvol_res_' + str(nside_h) + '_z=' + str(0) + '.pk'
+            fname = sdir + '/' + str(jsim) + '/halos_' + mass_type + '_lgMmincut_' + lgMmincutstr + '_subvol_res_' + str(nside_h) + '_z=' + str(0) + '.pk'
         else:
             raise ValueError('mass_type not recognized')
         # print(fname)
@@ -91,10 +92,10 @@ def load_density_halo_data_NGP(
             df_Mh_all = np.concatenate((df_Mh_all, df_h['M_halos']), axis=0)
             df_Nh = np.concatenate((df_Nh, df_h['N_halos']), axis=0)
 
-    ji = ji_array[0]
+    # jsim = ji_array[0]
     # load the density data
     df_load = pk.load(open(
-        sdir + '/' + str(ji) + '/density_subvol_m_res_' + str(nside_d) + '_z=' + str(0) + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(ncnn) + '.pk', 'rb')
+        sdir + '/' + str(ji_array[0]) + '/density_subvol_m_res_' + str(nside_d) + '_z=' + str(0) + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(ncnn) + '.pk', 'rb')
         )
     if stype == 'cic':
         df_d0 = df_load['density_cic_pad']
@@ -104,15 +105,18 @@ def load_density_halo_data_NGP(
         df_d0 = df_load['density_ngp_pad']
     ji0_shape = df_d0.shape[0]
     df_d_all = np.zeros((len(ji_array)*ji0_shape, len(z_all), df_d0.shape[1], df_d0.shape[2], df_d0.shape[3]))
-    for ji in ji_array:
+    for ji in range(len(ji_array)):
+        jsim = ji_array[ji]
         for iz, z in enumerate(z_all):
             # if z is a type of float, then it is a redshift:
             if isinstance(z, float) or isinstance(z, int):
                 df_load = pk.load(open(
-                    sdir + '/' + str(ji) + '/density_subvol_m_res_' + str(nside_d) + '_z=' + str(z) + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(ncnn) + '.pk', 'rb')
+                    sdir + '/' + str(jsim) + '/density_subvol_m_res_' + str(nside_d) + '_z=' + str(z) + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(ncnn) + '.pk', 'rb')
                     )
                 if stype == 'cic':
                     df_d_all[ji*ji0_shape:(ji+1)*ji0_shape, iz, ...] = np.log(1 + df_load['density_cic_pad'] + 1e-10)
+                if stype == 'uniform_cic':
+                    df_d_all[ji*ji0_shape:(ji+1)*ji0_shape, iz, ...] = np.log(1 + df_load['density_uniform_cic_pad'] + 1e-10)
                 if stype == 'ngp':
                     df_d_all[ji*ji0_shape:(ji+1)*ji0_shape, iz, ...] = np.log(1 + df_load['density_ngp_pad'] + 1e-10)
             # if z is a string, then its type is 'z_REDSHIFT_diff_sig_VALUE', where VALUE is a float. extract that REDSHIFT and VALUE
@@ -124,10 +128,12 @@ def load_density_halo_data_NGP(
                         z_REDSHIFT = 0
                     VALUE = float(z_REDSHIFT_diff_sig_VALUE.split('_')[4])
                     df_load = pk.load(open(
-                        sdir + '/' + str(ji) + '/density_subvol_m_res_' + str(nside_d) + '_z=' + str(z_REDSHIFT) + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(ncnn) + '.pk', 'rb')
+                        sdir + '/' + str(jsim) + '/density_subvol_m_res_' + str(nside_d) + '_z=' + str(z_REDSHIFT) + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(ncnn) + '.pk', 'rb')
                         )
                     if stype == 'cic':
                         density_unsmoothed = df_load['density_cic_pad']
+                    if stype == 'uniform_cic':
+                        density_unsmoothed = df_load['density_uniform_cic_pad']
                     if stype == 'ngp':
                         density_unsmoothed = df_load['density_ngp_pad']
                     # now smooth it with a gaussian filter of width VALUE
@@ -137,7 +143,7 @@ def load_density_halo_data_NGP(
                 
                 elif z[0] == 'M':
                     df_h = pk.load(open(
-                        sdir + '/' + str(ji) + '/halos_subvol_m_res_' + str(nside_d) + '_z=' + str(0) + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(ncnn) + '.pk', 'rb')
+                        sdir + '/' + str(jsim) + '/halos_subvol_m_res_' + str(nside_d) + '_z=' + str(0) + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(ncnn) + '.pk', 'rb')
                         )
 
                     M_id = z[1]
@@ -155,9 +161,9 @@ def load_density_halo_data_NGP(
     #     '_ncnn=' + str(0) + '_CIC_z=0_subvol.npy'
     #     )
 
-    ji = ji_array[0]
+    # ji = ji_array[0]
     df_load = pk.load(open(
-        sdir + '/' + str(ji) + '/density_subvol_m_res_' + str(nside_h) + '_z=' + str(0) + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(0) + '.pk', 'rb')
+        sdir + '/' + str(ji_array[0]) + '/density_subvol_m_res_' + str(nside_h) + '_z=' + str(0) + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(0) + '.pk', 'rb')
         )
     if stype == 'cic':
         df_d0 = df_load['density_cic_pad']
@@ -167,14 +173,17 @@ def load_density_halo_data_NGP(
         df_d0 = df_load['density_ngp_pad']    
     ji0_shape = df_d0.shape[0]
     df_d_all_nsh = np.zeros((len(ji_array)*ji0_shape, len(z_all), df_d0.shape[1], df_d0.shape[2], df_d0.shape[3]))
-    for ji in ji_array:
+    for ji in range(len(ji_array)):
+        jsim = ji_array[ji]
         for iz, z in enumerate(z_all):
             if isinstance(z, float) or isinstance(z, int):
                 df_load = pk.load(open(
-                    sdir + '/' + str(ji) + '/density_subvol_m_res_' + str(nside_h) + '_z=' + str(z) + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(0) + '.pk', 'rb')
+                    sdir + '/' + str(jsim) + '/density_subvol_m_res_' + str(nside_h) + '_z=' + str(z) + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(0) + '.pk', 'rb')
                     )
                 if stype == 'cic':
                     df_d_all_nsh[ji*ji0_shape:(ji+1)*ji0_shape, iz, ...] = np.log(1 + df_load['density_cic_pad'] + 1e-10)
+                if stype == 'uniform_cic':
+                    df_d_all_nsh[ji*ji0_shape:(ji+1)*ji0_shape, iz, ...] = np.log(1 + df_load['density_uniform_cic_pad'] + 1e-10)
                 if stype == 'ngp':
                     df_d_all_nsh[ji*ji0_shape:(ji+1)*ji0_shape, iz, ...] = np.log(1 + df_load['density_ngp_pad'] + 1e-10)
             elif isinstance(z, str):
@@ -185,10 +194,12 @@ def load_density_halo_data_NGP(
                         z_REDSHIFT = 0
                     VALUE = float(z_REDSHIFT_diff_sig_VALUE.split('_')[4])
                     df_load = pk.load(open(
-                        sdir + '/' + str(ji) + '/density_subvol_m_res_' + str(nside_h) + '_z=' + str(z_REDSHIFT) + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(0) + '.pk', 'rb')
+                        sdir + '/' + str(jsim) + '/density_subvol_m_res_' + str(nside_h) + '_z=' + str(z_REDSHIFT) + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(0) + '.pk', 'rb')
                         )
                     if stype == 'cic':
                         density_unsmoothed = df_load['density_cic_pad']
+                    if stype == 'uniform_cic':
+                        density_unsmoothed = df_load['density_uniform_cic_pad']
                     if stype == 'ngp':
                         density_unsmoothed = df_load['density_ngp_pad']
                     # now smooth it with a gaussian filter of width VALUE
@@ -197,7 +208,7 @@ def load_density_halo_data_NGP(
                     df_d_all_nsh[ji*ji0_shape:(ji+1)*ji0_shape, iz, ...] = density_smoothed - density_unsmoothed
                 elif z[0] == 'M':
                     df_h = pk.load(open(
-                        sdir + '/' + str(ji) + '/halos_subvol_m_res_' + str(nside_h) + '_z=' + str(0) + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(0) + '.pk', 'rb')
+                        sdir + '/' + str(jsim) + '/halos_subvol_m_res_' + str(nside_h) + '_z=' + str(0) + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(0) + '.pk', 'rb')
                         )
 
                     M_id = z[1]
