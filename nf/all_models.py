@@ -73,7 +73,7 @@ class SumGaussModel(nn.Module):
             ngauss=1,
             mu_all=None,
             sig_all=None,
-            base_dist='pl_exp'
+            base_dist='normal'
         ):
         super().__init__()
         self.dim = dim
@@ -95,7 +95,7 @@ class SumGaussModel(nn.Module):
         if (self.mu_all is None) or (self.sig_all is None):
             self.layer_init = base_network(self.num_cond, 3 * self.ngauss, hidden_dim)
         else:
-            if base_dist is None:
+            if base_dist == 'normal':
                 self.layer_init = base_network(self.num_cond, self.ngauss, hidden_dim)
             elif base_dist == 'pl_exp':
                 self.layer_init = base_network(self.num_cond, self.ngauss + 2, hidden_dim)
@@ -129,7 +129,7 @@ class SumGaussModel(nn.Module):
             logP = torch.log(Li_all)
         else:
             mu_all, var_all = self.mu_all, self.var_all
-            if self.base_dist is None:
+            if self.base_dist == 'normal':
                 pw_all_inp = self.layer_init(cond_inp)
             elif self.base_dist == 'pl_exp':
                 # in this we have a power law and an exponential as a base distribution
@@ -139,17 +139,23 @@ class SumGaussModel(nn.Module):
                 al = out[:, self.ngauss]
                 # put al between 0 and 2
                 al = 0. * nn.Tanh()(al)
+                # al = 5. * nn.Tanh()(al)
+                # al = 5*(1 + nn.Tanh()(al))
                 bt = out[:, self.ngauss + 1] + 1.
+                # bt = out[:, self.ngauss + 1]
+                # bt = 5*(1 + nn.Tanh()(bt))                
                 # we first predict the base distirbution given the alpha and beta of the form mu**alpha * exp(-beta*mu)
                 base_pws = torch.zeros(x.shape[0], self.ngauss)
                 base_pws = base_pws.to('cuda')
                 for i in range(self.ngauss):
                     base_pws[:, i] = torch.pow(mu_all[i], al) * torch.exp(-bt * mu_all[i])
                 pw_all_inp = torch.mul(pw_all_orig, base_pws)
+                pw_all_inp = torch.log(pw_all_inp)
             else:
                 raise ValueError("base_dist not supported")
 
             pw_all = nn.Softmax(dim=1)(pw_all_inp)
+            # pw_all = nn.Softmax(dim=1)(torch.log(pw_all_inp))
             Li_all = torch.zeros(x.shape[0])
             Li_all = Li_all.to('cuda')
             for i in range(self.ngauss):
@@ -162,7 +168,6 @@ class SumGaussModel(nn.Module):
         return logP
 
     def inverse(self, cond_inp=None):
-        #
         if (self.mu_all is None) or (self.sig_all is None):
             out = self.layer_init(cond_inp)
             mu_all, alpha_all, pw_all = (
@@ -186,8 +191,10 @@ class SumGaussModel(nn.Module):
                     z = torch.cat((z, z_k), dim=0)
 
         else:
-            if self.base_dist is None:
-                pw_all = self.layer_init(cond_inp)
+            # print(self.base_dist)
+            # import pdb; pdb.set_trace()
+            if self.base_dist == 'normal':
+                pw_all_inp = self.layer_init(cond_inp)
             elif self.base_dist == 'pl_exp':
                 # in this we have a power law and an exponential as a base distribution
                 out = self.layer_init(cond_inp)
@@ -195,20 +202,31 @@ class SumGaussModel(nn.Module):
                 pw_all_orig = out[:, 0:self.ngauss]
                 al = out[:, self.ngauss]
                 al = 0. * nn.Tanh()(al)
+                # al = 5. * nn.Tanh()(al)
+                # al = 5*(1 + nn.Tanh()(al))
                 bt = out[:, self.ngauss + 1] + 1.
+                
+                # bt = out[:, self.ngauss + 1]
+                # bt = 5*(1 + nn.Tanh()(bt))
                 # we first predict the base distirbution given the alpha and beta of the form mu**alpha * exp(-beta*mu)
                 base_pws = torch.zeros(out.shape[0], self.ngauss)
                 base_pws = base_pws.to('cuda')
                 for i in range(self.ngauss):
                     base_pws[:, i] = torch.pow(self.mu_all[i], al) * torch.exp(-bt * self.mu_all[i])
-                pw_all = torch.mul(pw_all_orig, base_pws)
-            pw_all = nn.Softmax(dim=1)(pw_all)
+                pw_all_inp = torch.mul(pw_all_orig, base_pws)
+                pw_all_inp = torch.log(pw_all_inp)
+                
+
+            pw_all = nn.Softmax(dim=1)(pw_all_inp)
+            
+            # pw_all = nn.Softmax(dim=1)(torch.log(pw_all_inp))
 
             var_all = self.var_all
             mu_all = self.mu_all
 
             counts = torch.distributions.multinomial.Multinomial(total_count=1, probs=pw_all).sample()
             counts = counts.to('cuda')
+            # import pdb; pdb.set_trace()
             # loop over gaussians
             # z = torch.empty(0, device=counts.device)
             z_out = torch.empty(counts.shape[0], device=counts.device)
@@ -216,10 +234,12 @@ class SumGaussModel(nn.Module):
                 # find indices where count is non-zero for kth gaussian
                 ind = torch.nonzero(counts[:, k])
                 # if there are any indices, sample from kth gaussian
+                # import pdb; pdb.set_trace()    
                 if ind.shape[0] > 0:
                     z_k = (mu_all[k] + torch.randn(ind.shape[0], device='cuda') * torch.sqrt(var_all[k]))
                     z_out[ind[:, 0]] = z_k
                     # z = torch.cat((z, z_k), dim=0)
+                            
         return z_out
 
     def sample(self, cond_inp=None, mask=None):
@@ -380,7 +400,11 @@ class NSF_M1_CNNcond(nn.Module):
             # log_det_all = torch.zeros(z.shape)
             W, H, D = torch.split(out, self.K, dim=1)
             W, H = torch.softmax(W, dim=1), torch.softmax(H, dim=1)
-            W, H = 2 * self.B * W, 2 * self.B * H
+            if isinstance(self.B, float) or isinstance(self.B, int):
+                W, H = 2 * self.B * W, 2 * self.B * H
+            else:
+                W, H = (self.B[1] - self.B[0]) * W, (self.B[1] - self.B[0]) * H
+            # W, H = 2 * self.B * W, 2 * self.B * H
             # D = F.softplus(D)
             D = 2. * F.sigmoid(D)
             z, ld = unconstrained_RQS(x, W, H, D, inverse=False, tail_bound=self.B)
@@ -490,7 +514,11 @@ class NSF_M1_CNNcond(nn.Module):
             z = torch.zeros_like(x)
             W, H, D = torch.split(out, self.K, dim=1)
             W, H = torch.softmax(W, dim=1), torch.softmax(H, dim=1)
-            W, H = 2 * self.B * W, 2 * self.B * H
+            # W, H = 2 * self.B * W, 2 * self.B * H
+            if isinstance(self.B, float) or isinstance(self.B, int):
+                W, H = 2 * self.B * W, 2 * self.B * H
+            else:
+                W, H = (self.B[1] - self.B[0]) * W, (self.B[1] - self.B[0]) * H            
             # D = F.softplus(D)
             D = 2. * F.sigmoid(D)
             z, ld = unconstrained_RQS(x, W, H, D, inverse=True, tail_bound=self.B)
@@ -650,7 +678,12 @@ class NSF_Mdiff_CNNcond(nn.Module):
                 # log_det_all = torch.zeros(z.shape)
                 W, H, D = torch.split(out, self.K, dim=1)
                 W, H = torch.softmax(W, dim=1), torch.softmax(H, dim=1)
-                W, H = 2 * self.B * W, 2 * self.B * H
+                # W, H = 2 * self.B * W, 2 * self.B * H
+                if isinstance(self.B, float) or isinstance(self.B, int):
+                    W, H = 2 * self.B * W, 2 * self.B * H
+                else:
+                    W, H = (self.B[1] - self.B[0]) * W, (self.B[1] - self.B[0]) * H            
+
                 D = F.softplus(D)
                 z, ld = unconstrained_RQS(x, W, H, D, inverse=False, tail_bound=self.B)
                 log_det_all_jd += ld
@@ -762,7 +795,12 @@ class NSF_Mdiff_CNNcond(nn.Module):
                 z = torch.zeros_like(x)
                 W, H, D = torch.split(out, self.K, dim=1)
                 W, H = torch.softmax(W, dim=1), torch.softmax(H, dim=1)
-                W, H = 2 * self.B * W, 2 * self.B * H
+                # W, H = 2 * self.B * W, 2 * self.B * H
+                if isinstance(self.B, float) or isinstance(self.B, int):
+                    W, H = 2 * self.B * W, 2 * self.B * H
+                else:
+                    W, H = (self.B[1] - self.B[0]) * W, (self.B[1] - self.B[0]) * H            
+
                 D = F.softplus(D)
                 z, ld = unconstrained_RQS(x, W, H, D, inverse=True, tail_bound=self.B)
                 log_det_all += ld

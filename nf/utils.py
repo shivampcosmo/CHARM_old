@@ -25,7 +25,14 @@ def unconstrained_RQS(inputs, unnormalized_widths, unnormalized_heights,
                       tail_bound=3., min_bin_width=DEFAULT_MIN_BIN_WIDTH,
                       min_bin_height=DEFAULT_MIN_BIN_HEIGHT,
                       min_derivative=DEFAULT_MIN_DERIVATIVE):
-    inside_intvl_mask = (inputs >= -tail_bound) & (inputs <= tail_bound)
+    if isinstance(tail_bound, float) or isinstance(tail_bound, int):
+        tail_bound_low = -tail_bound
+        tail_bound_high = tail_bound
+    else:
+        tail_bound_low = tail_bound[0]
+        tail_bound_high = tail_bound[1]
+    
+    inside_intvl_mask = (inputs >= tail_bound_low) & (inputs <= tail_bound_high)
     outside_interval_mask = ~inside_intvl_mask
 
     outputs = torch.zeros_like(inputs)
@@ -45,7 +52,7 @@ def unconstrained_RQS(inputs, unnormalized_widths, unnormalized_heights,
         unnormalized_heights=unnormalized_heights[inside_intvl_mask, :],
         unnormalized_derivatives=unnormalized_derivatives[inside_intvl_mask, :],
         inverse=inverse,
-        left=-tail_bound, right=tail_bound, bottom=-tail_bound, top=tail_bound,
+        left=tail_bound_low, right=tail_bound_high, bottom=tail_bound_low, top=tail_bound_high,
         min_bin_width=min_bin_width,
         min_bin_height=min_bin_height,
         min_derivative=min_derivative

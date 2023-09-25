@@ -114,7 +114,18 @@ class COMBINED_Model(nn.Module):
         x_Ntot_FP=None,
         Nhalos_truth_all_FP=None,
         mask_Mdiff_truth_all_FP=None,
-        mask_M1_truth_all_FP=None
+        mask_M1_truth_all_FP=None,
+        L2norm_M1hist=False,
+        L2norm_Ntothist=False,
+        delta_low = 0.5,
+        delta_mid1 = 1,
+        delta_mid2 = 3,
+        Ntot_hist_min = 1,
+        Ntot_hist_max = 6,
+        nbins_Ntot = 6,
+        nbins_M1 = 8,
+        M1_hist_min = -0.5,
+        M1_hist_max = 0.1
         ):
         
         nbatches = cond_x.shape[0]
@@ -122,6 +133,8 @@ class COMBINED_Model(nn.Module):
         loss_M1 = torch.zeros(1, device='cuda')
         loss_M1reg = torch.zeros(1, device='cuda')
         loss_Mdiff = torch.zeros(1, device='cuda')
+        M1_L2_loss_tot = torch.zeros(1, device='cuda')
+        Ntot_L2_loss_tot = torch.zeros(1, device='cuda')
         for jb in range(nbatches):
             cond_out = self.conv_layers(cond_x[jb])
             cond_out = torch.cat((cond_out, cond_x_nsh[jb]), dim=1)
@@ -137,8 +150,64 @@ class COMBINED_Model(nn.Module):
                 else:
                     loss_Ntot += -self.Ntot_model.forward(x_Ntot[jb], cond_out_Ntot)
 
+                if use_Ntot_samples or L2norm_Ntothist:
+                    Ntot_samp_tensor = self.Ntot_model.inverse(cond_out_Ntot)
+                
+                if L2norm_Ntothist:
+                    delta_z0_here = cond_x_nsh[jb][:,0]
+                    indsel_delta_low = torch.where(delta_z0_here < delta_low)[0]
+                    indsel_delta_mid1 = torch.where((delta_z0_here >= delta_low) & (delta_z0_here < delta_mid1))[0]
+                    indsel_delta_mid2 = torch.where((delta_z0_here >= delta_mid1) & (delta_z0_here < delta_mid2))[0]
+                    indsel_delta_high = torch.where(delta_z0_here >= delta_mid2)[0]
+
+                    Ntot_samp_low = Ntot_samp_tensor[indsel_delta_low]
+                    Ntot_samp_mid1 = Ntot_samp_tensor[indsel_delta_mid1]
+                    Ntot_samp_mid2 = Ntot_samp_tensor[indsel_delta_mid2]
+                    Ntot_samp_high = Ntot_samp_tensor[indsel_delta_high]
+                    Ntot_truth_low = x_Ntot[jb][:,0][indsel_delta_low]
+                    Ntot_truth_mid1 = x_Ntot[jb][:,0][indsel_delta_mid1]
+                    Ntot_truth_mid2 = x_Ntot[jb][:,0][indsel_delta_mid2]
+                    Ntot_truth_high = x_Ntot[jb][:,0][indsel_delta_high]
+
+                    Ntot_truth_low_hist = torch.log10(1 + torch.histc(Ntot_truth_low, bins=nbins_Ntot, min=Ntot_hist_min, max=Ntot_hist_max))
+                    Ntot_truth_mid1_hist = torch.log10(1 + torch.histc(Ntot_truth_mid1, bins=nbins_Ntot, min=Ntot_hist_min, max=Ntot_hist_max))
+                    Ntot_truth_mid2_hist = torch.log10(1 + torch.histc(Ntot_truth_mid2, bins=nbins_Ntot, min=Ntot_hist_min, max=Ntot_hist_max))
+                    Ntot_truth_high_hist = torch.log10(1 + torch.histc(Ntot_truth_high, bins=nbins_Ntot, min=Ntot_hist_min, max=Ntot_hist_max))
+                    
+                    Ntot_samp_low_hist = torch.log10(1 + torch.histc(Ntot_samp_low, bins=nbins_Ntot, min=Ntot_hist_min, max=Ntot_hist_max))
+                    Ntot_samp_mid1_hist = torch.log10(1 + torch.histc(Ntot_samp_mid1, bins=nbins_Ntot, min=Ntot_hist_min, max=Ntot_hist_max))
+                    Ntot_samp_mid2_hist = torch.log10(1 + torch.histc(Ntot_samp_mid2, bins=nbins_Ntot, min=Ntot_hist_min, max=Ntot_hist_max))
+                    Ntot_samp_high_hist = torch.log10(1 + torch.histc(Ntot_samp_high, bins=nbins_Ntot, min=Ntot_hist_min, max=Ntot_hist_max))
+
+                    L2_loss_low = torch.sum((Ntot_truth_low_hist - Ntot_samp_low_hist) ** 2)
+                    L2_loss_mid1 = torch.sum((Ntot_truth_mid1_hist -Ntot_samp_mid1_hist) ** 2)
+                    L2_loss_mid2 = torch.sum((Ntot_truth_mid2_hist -Ntot_samp_mid2_hist) ** 2)
+                    L2_loss_high = torch.sum((Ntot_truth_high_hist -Ntot_samp_high_hist) ** 2)
+
+                    # Ntot_truth_low_hist = (1 + torch.histc(Ntot_truth_low, bins=nbins_Ntot, min=Ntot_hist_min, max=Ntot_hist_max))
+                    # Ntot_truth_mid1_hist = (1 + torch.histc(Ntot_truth_mid1, bins=nbins_Ntot, min=Ntot_hist_min, max=Ntot_hist_max))
+                    # Ntot_truth_mid2_hist = (1 + torch.histc(Ntot_truth_mid2, bins=nbins_Ntot, min=Ntot_hist_min, max=Ntot_hist_max))
+                    # Ntot_truth_high_hist = (1 + torch.histc(Ntot_truth_high, bins=nbins_Ntot, min=Ntot_hist_min, max=Ntot_hist_max))
+                    
+                    # Ntot_samp_low_hist = (1 + torch.histc(Ntot_samp_low, bins=nbins_Ntot, min=Ntot_hist_min, max=Ntot_hist_max))
+                    # Ntot_samp_mid1_hist = (1 + torch.histc(Ntot_samp_mid1, bins=nbins_Ntot, min=Ntot_hist_min, max=Ntot_hist_max))
+                    # Ntot_samp_mid2_hist = (1 + torch.histc(Ntot_samp_mid2, bins=nbins_Ntot, min=Ntot_hist_min, max=Ntot_hist_max))
+                    # Ntot_samp_high_hist = (1 + torch.histc(Ntot_samp_high, bins=nbins_Ntot, min=Ntot_hist_min, max=Ntot_hist_max))
+
+                    # L2_loss_low = torch.sum(((Ntot_truth_low_hist - Ntot_samp_low_hist)/Ntot_truth_low_hist) ** 2)
+                    # L2_loss_mid1 = torch.sum(((Ntot_truth_mid1_hist -Ntot_samp_mid1_hist)/Ntot_truth_mid1_hist) ** 2)
+                    # L2_loss_mid2 = torch.sum(((Ntot_truth_mid2_hist -Ntot_samp_mid2_hist)/Ntot_truth_mid1_hist) ** 2)
+                    # L2_loss_high = torch.sum(((Ntot_truth_high_hist -Ntot_samp_high_hist)/Ntot_truth_mid1_hist) ** 2)
+
+                    if jb == 0:
+                        Ntot_L2_loss_tot += L2_loss_low + L2_loss_mid1 + L2_loss_mid2 + L2_loss_high
+                    else:
+                        Ntot_L2_loss_tot += L2_loss_low + L2_loss_mid1 + L2_loss_mid2 + L2_loss_high
+
+
+
                 if use_Ntot_samples:
-                    Ntot_samp = np.maximum(np.round(self.Ntot_model.inverse(cond_out_Ntot).detach().numpy()) - 1,
+                    Ntot_samp = np.maximum(np.round(Ntot_samp_tensor.detach().numpy()) - 1,
                                            0).astype(int)
                     mask_samp_all = np.zeros((Ntot_samp.shape[0], Ntot_samp.shape[1], self.ndim))
                     idx = np.arange(self.ndim)[None, None, :]
@@ -163,12 +232,17 @@ class COMBINED_Model(nn.Module):
                     # tensor_zero = torch.Tensor(0).cuda()
                     # Nhalos_truth = torch.maximum(torch.round(x_Ntot), tensor_zero)
                     Nhalos_truth = Nhalos_truth_all[jb].to('cuda')
-                    mask_M1_truth = mask_M1_truth_all[jb].to('cuda')
-                    mask_Mdiff_truth = mask_Mdiff_truth_all[jb].to('cuda')
+                    if reg_M1 or train_M1:   
+                        mask_M1_truth = mask_M1_truth_all[jb].to('cuda')
+                    if train_Mdiff:
+                        mask_Mdiff_truth = mask_Mdiff_truth_all[jb].to('cuda')
             else:
                 Nhalos_truth = Nhalos_truth_all[jb].to('cuda')
-                mask_Mdiff_truth = mask_Mdiff_truth_all[jb].to('cuda')
-                mask_M1_truth = mask_M1_truth_all[jb].to('cuda')
+                if reg_M1 or train_M1:                
+                    mask_M1_truth = mask_M1_truth_all[jb].to('cuda')
+                if train_Mdiff:
+                    mask_Mdiff_truth = mask_Mdiff_truth_all[jb].to('cuda')
+                
 
 
 
@@ -178,6 +252,7 @@ class COMBINED_Model(nn.Module):
                     cond_inp_M1 = torch.cat([cond_inp_M1, x_M1_FP[jb]], dim=1)
                 if mask_M1_truth_all_FP is not None:
                     cond_inp_M1 = torch.cat([cond_inp_M1, mask_M1_truth_all_FP[jb][:,None]], dim=1)
+                # import pdb; pdb.set_trace()
                 if self.sep_M1_cond:
                     cond_inp_M1 = self.cond_M1_layer(cond_inp_M1)
             if reg_M1:
@@ -194,16 +269,74 @@ class COMBINED_Model(nn.Module):
                     loss_M1 = -(self.M1_model.forward(x_M1[jb], cond_inp_M1)) * mask_M1_truth
                 else:
                     loss_M1 += -(self.M1_model.forward(x_M1[jb], cond_inp_M1)) * mask_M1_truth
+                # import pdb; pdb.set_trace()
+                if use_M1_samples or L2norm_M1hist:
+                    # M1_samp = self.M1_model.inverse(cond_inp_M1, mask_M1_truth).detach().numpy()
+                    # M1_samp = np.maximum(M1_samp, 0)
+                    M1_samp, _ = self.M1_model.inverse(cond_inp_M1, mask_M1_truth[:,None])
+                                
+                if L2norm_M1hist:
+                    ind_M1_unmasked = torch.where(mask_M1_truth > 0)[0]
+                    delta_z0_here = cond_x_nsh[jb][ind_M1_unmasked,0]
+                    indsel_delta_low = torch.where(delta_z0_here < delta_low)[0]
+                    indsel_delta_mid1 = torch.where((delta_z0_here >= delta_low) & (delta_z0_here < delta_mid1))[0]
+                    indsel_delta_mid2 = torch.where((delta_z0_here >= delta_mid1) & (delta_z0_here < delta_mid2))[0]
+                    indsel_delta_high = torch.where(delta_z0_here >= delta_mid2)[0]
+                    M1_samp_low = M1_samp[ind_M1_unmasked][indsel_delta_low]
+                    M1_samp_mid1 = M1_samp[ind_M1_unmasked][indsel_delta_mid1]
+                    M1_samp_mid2 = M1_samp[ind_M1_unmasked][indsel_delta_mid2]
+                    M1_samp_high = M1_samp[ind_M1_unmasked][indsel_delta_high]
+                    M1_truth_low = x_M1[jb][ind_M1_unmasked][indsel_delta_low]
+                    M1_truth_mid1 = x_M1[jb][ind_M1_unmasked][indsel_delta_mid1]
+                    M1_truth_mid2 = x_M1[jb][ind_M1_unmasked][indsel_delta_mid2]
+                    M1_truth_high = x_M1[jb][ind_M1_unmasked][indsel_delta_high]
+
+                    M1_truth_low_hist = torch.log10(1 + torch.histc(M1_truth_low, bins=nbins_M1, min=M1_hist_min, max=M1_hist_max))
+                    M1_truth_mid1_hist = torch.log10(1 + torch.histc(M1_truth_mid1, bins=nbins_M1, min=M1_hist_min, max=M1_hist_max))
+                    M1_truth_mid2_hist = torch.log10(1 + torch.histc(M1_truth_mid2, bins=nbins_M1, min=M1_hist_min, max=M1_hist_max))
+                    M1_truth_high_hist = torch.log10(1 + torch.histc(M1_truth_high, bins=nbins_M1, min=M1_hist_min, max=M1_hist_max))
+                    
+                    M1_samp_low_hist = torch.log10(1 + torch.histc(M1_samp_low, bins=nbins_M1, min=M1_hist_min, max=M1_hist_max))
+                    M1_samp_mid1_hist = torch.log10(1 + torch.histc(M1_samp_mid1, bins=nbins_M1, min=M1_hist_min, max=M1_hist_max))
+                    M1_samp_mid2_hist = torch.log10(1 + torch.histc(M1_samp_mid2, bins=nbins_M1, min=M1_hist_min, max=M1_hist_max))
+                    M1_samp_high_hist = torch.log10(1 + torch.histc(M1_samp_high, bins=nbins_M1, min=M1_hist_min, max=M1_hist_max))
+
+                    L2_loss_low = torch.sum((M1_truth_low_hist - M1_samp_low_hist) ** 2)
+                    L2_loss_mid1 = torch.sum((M1_truth_mid1_hist - M1_samp_mid1_hist) ** 2)
+                    L2_loss_mid2 = torch.sum((M1_truth_mid2_hist - M1_samp_mid2_hist) ** 2)
+                    L2_loss_high = torch.sum((M1_truth_high_hist - M1_samp_high_hist) ** 2)
+
+                    # M1_truth_low_hist = (1 + torch.histc(M1_truth_low, bins=nbins_M1, min=M1_hist_min, max=M1_hist_max))
+                    # M1_truth_mid1_hist = (1 + torch.histc(M1_truth_mid1, bins=nbins_M1, min=M1_hist_min, max=M1_hist_max))
+                    # M1_truth_mid2_hist = (1 + torch.histc(M1_truth_mid2, bins=nbins_M1, min=M1_hist_min, max=M1_hist_max))
+                    # M1_truth_high_hist = (1 + torch.histc(M1_truth_high, bins=nbins_M1, min=M1_hist_min, max=M1_hist_max))
+                    
+                    # M1_samp_low_hist = (1 + torch.histc(M1_samp_low, bins=nbins_M1, min=M1_hist_min, max=M1_hist_max))
+                    # M1_samp_mid1_hist = (1 + torch.histc(M1_samp_mid1, bins=nbins_M1, min=M1_hist_min, max=M1_hist_max))
+                    # M1_samp_mid2_hist = (1 + torch.histc(M1_samp_mid2, bins=nbins_M1, min=M1_hist_min, max=M1_hist_max))
+                    # M1_samp_high_hist = (1 + torch.histc(M1_samp_high, bins=nbins_M1, min=M1_hist_min, max=M1_hist_max))
+
+                    # L2_loss_low = torch.sum(((M1_truth_low_hist - M1_samp_low_hist)/M1_truth_low_hist) ** 2)
+                    # L2_loss_mid1 = torch.sum(((M1_truth_mid1_hist - M1_samp_mid1_hist)/M1_truth_mid1_hist) ** 2)
+                    # L2_loss_mid2 = torch.sum(((M1_truth_mid2_hist - M1_samp_mid2_hist)/M1_truth_mid2_hist) ** 2)
+                    # L2_loss_high = torch.sum(((M1_truth_high_hist - M1_samp_high_hist)/M1_truth_high_hist) ** 2)
+
+
+                    if jb == 0:
+                        M1_L2_loss_tot += L2_loss_low + L2_loss_mid1 + L2_loss_mid2 + L2_loss_high
+                    else:
+                        M1_L2_loss_tot += L2_loss_low + L2_loss_mid1 + L2_loss_mid2 + L2_loss_high
+                        
+                    # import pdb; pdb.set_trace()
                 if use_M1_samples:
-                    M1_samp = self.M1_model.inverse(cond_inp_M1, mask_M1_truth).detach().numpy()
-                    M1_samp = np.maximum(M1_samp, 0)
                     M1_truth = torch.from_numpy(M1_samp).float().cuda()
                 else:
                     M1_truth = x_M1[jb]
             else:
-                M1_truth = x_M1[jb]
-                # Nhalos_truth = x_Ntot[jb]
-                Nhalos_truth = Nhalos_truth_all[jb].to('cuda')
+                if train_Mdiff:
+                    M1_truth = x_M1[jb]
+                    # Nhalos_truth = x_Ntot[jb]
+                    Nhalos_truth = Nhalos_truth_all[jb].to('cuda')
 
             if train_Mdiff:
                 cond_inp_Mdiff = torch.cat([Nhalos_truth, M1_truth, cond_out], dim=1)
@@ -213,8 +346,8 @@ class COMBINED_Model(nn.Module):
                     loss_Mdiff = -self.Mdiff_model.forward(x_Mdiff[jb], cond_inp_Mdiff, mask_Mdiff_truth)
                 else:
                     loss_Mdiff += -self.Mdiff_model.forward(x_Mdiff[jb], cond_inp_Mdiff, mask_Mdiff_truth)
-        loss = torch.mean(loss_Ntot + loss_M1 + loss_M1reg + loss_Mdiff)
-
+        loss = torch.mean(loss_Ntot + loss_M1 + loss_M1reg + loss_Mdiff) + M1_L2_loss_tot + Ntot_L2_loss_tot
+        # import pdb; pdb.set_trace()
         return loss
 
     def inverse(
@@ -260,9 +393,10 @@ class COMBINED_Model(nn.Module):
                 Ntot_samp = np.maximum(np.round(Nhalos_truth[jb,...].cpu().detach().numpy()) - 1, 0).astype(int)
                 # Ntot_samp = Nhalos_truth.cpu().detach().numpy()
             Ntot_samp_out.append(Ntot_samp)
-            
             # nvox_batch = 64 // 8
             nvox_batch = self.nout // self.nbatch
+            # import pdb; pdb.set_trace()
+            # nvox_batch = 1
             Ntot_samp_rs = Ntot_samp.reshape(-1, nvox_batch**3)
             # print(cond_out_Ntot.shape, Ntot_samp.shape, Ntot_samp_rs.shape)
             # print(Ntot_samp_rs.shape, nvox_batch)
@@ -321,9 +455,11 @@ class COMBINED_Model(nn.Module):
                 cond_inp_M1 = torch.cat([cond_inp_M1, x_M1_FP[jb]], dim=1)
             if mask_M1_truth_all_FP is not None:
                 cond_inp_M1 = torch.cat([cond_inp_M1, mask_M1_truth_all_FP[jb][:,None]], dim=1)            
-            if self.sep_M1_cond:
-                cond_inp_M1 = self.cond_M1_layer(cond_inp_M1)
-            cond_inp_M1_out.append(cond_inp_M1)
+            
+            if reg_M1 or train_M1:
+                if self.sep_M1_cond:
+                    cond_inp_M1 = self.cond_M1_layer(cond_inp_M1)
+                cond_inp_M1_out.append(cond_inp_M1)
                 
             # print(Ntot_samp.shape,cond_inp_M1.shape, mask_tensor_M1_samp.shape)
             if reg_M1:

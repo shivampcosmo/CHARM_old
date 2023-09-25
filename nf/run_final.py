@@ -212,7 +212,7 @@ optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 loss_all_it = []
 loss_min = 1e20
 epoch_tot_counter = 0
-scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.5, patience=200, verbose=True, cooldown=200, min_lr=1e-8)
+scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.5, patience=500, verbose=True, cooldown=300, min_lr=1e-8)
 
 from torch.utils.data import DataLoader, Dataset
 class LoadCustomData(Dataset):
@@ -280,12 +280,23 @@ config_train = config['train_settings']
 batch_size = config_train['batch_size_DL']
 all_gpu = config_train['all_gpu']
 
+try:
+    L2norm_Ntothist = config_train['L2norm_Ntothist']
+except:
+    L2norm_Ntothist = False
+
+try:
+    L2norm_M1hist = config_train['L2norm_M1hist']
+except:
+    L2norm_M1hist = False
 
 
-save_bestfit_model_name = 'TRAIN_ROCKSTAR_FOF/TEST_FINALS_SIMPLE_BATCHED_model_save_nsim' + str(len(ji_array)) + \
+save_bestfit_model_name = 'TRAIN_ROCKSTAR_FOF/CORRPLEXP_TEST_FINALS_SIMPLE_BATCHED_model_save_nsim' + str(len(ji_array)) + \
                             '_cond_sim_' + cond_sim + \
                             '_nsd' + str(ns_d) + '_nc' + str(nc) + '_nsh' + str(ns_h) + '_mass_' + mass_type + \
-                            '_stype_' + stype + '_nsimperbatch' + str(nsims_per_batch) + '_nbatches' + str(nbatches_train)
+                            '_KM1_' + str(K_M1) + \
+                            '_stype_' + stype + '_nsimperbatch' + str(nsims_per_batch) + '_nbatches' + str(nbatches_train) + \
+                            '_L2normNtothist_' + str(L2norm_Ntothist) + '_L2normM1hist_' + str(L2norm_M1hist)
 print(save_bestfit_model_name)
 
 start_with_bestfit = config_train['start_with_bestfit']
@@ -392,7 +403,9 @@ for jn in (range(len(nepochs_array))):
                     # x_Ntot_FP=X_Nhalo_FP,
                     # Nhalos_truth_all_FP=Nhalos_truth_tensor_FP,
                     # mask_Mdiff_truth_all_FP=mask_tensor_Mdiff_train_FP,
-                    mask_M1_truth_all_FP=mask_tensor_M1_train_FP_jd             
+                    mask_M1_truth_all_FP=mask_tensor_M1_train_FP_jd,
+                    L2norm_Ntothist=L2norm_Ntothist,
+                    L2norm_M1hist=L2norm_M1hist        
                     )
 
                 loss.backward()
