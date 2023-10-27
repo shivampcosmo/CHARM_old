@@ -1,8 +1,8 @@
 sim_settings:
   # number of simulations to train
-  nsims : 10
+  nsims : 4
   # resolution of the simulations
-  ns_d : 128
+  ns_d : 256
   # nbatches 
   nb : 8
   # nfilters
@@ -10,7 +10,8 @@ sim_settings:
   # convolution layers types:
   # layers_types : ['res', 'res', 'res', 'res', 'res', 'res']
   # layers_types : ['res', 'res', 'res', 'res']
-  layers_types : ['res', 'res']  
+  layers_types : ['res', 'res']
+  # layers_types : ['res', 'res']
   # conditioning of simulations:
   z_all : [0, 127, 'z_0_diff_sig_1', 'z_0_diff_sig_3']
   # conditioning of the fastpm simulations:
@@ -18,27 +19,27 @@ sim_settings:
   # condition on which simulation:
   cond_sim : 'fastpm'
   # resolution of the halo catalog:
-  ns_h : 128
+  ns_h : 256
   # nsims per batch when training
-  nsims_per_batch : 512
+  nsims_per_batch : 128
   # nbatches to use to train
   nbatches_train : 1
   # what type of smoothing to use for density:
   # stype : 'uniform_cic'
   stype : 'cic'  
   # mass type of halos:
-  # mass_type : 'rockstar_200c'
-  mass_type : 'fof'  
+  mass_type : 'rockstar_200c'
+  # mass_type : 'fof'  
   # mass cut of halo catalog:
   # lgMmincutstr : '5e13'
   # lgMmin : 13.6989
-  lgMmincutstr : '1e13'
-  lgMmin : 13.0
+  lgMmincutstr : '7e12'
+  lgMmin : 12.7
   lgMmax : 15.5
   rescale_sub : -0.5
   Nmax : 4
   subsel_highM1 : True
-  nsubsel : 512
+  nsubsel : 128
   is_HR : True
 
 network_settings:
@@ -49,7 +50,7 @@ network_settings:
   nflows_M1_NSF : 5
 
   K_Mdiff : 5
-  B_Mdiff : [0,1.0]
+  B_Mdiff : [0,0.7]
   nflows_Mdiff_NSF : 2
 
   # base_dist_Ntot : 'normal'
@@ -63,12 +64,13 @@ network_settings:
 
 
 train_settings:
-  batch_size_DL : 16
+  batch_size_DL : 1
   all_gpu : False
-  nepochs_Ntot_only : 3000
-  nepochs_Ntot_M1_only : 4000
-  nepochs_all : 0
+  nepochs_Ntot_only : 10000
+  nepochs_Ntot_M1_only : 10000
+  nepochs_all : 28000
   start_with_bestfit : False
   L2norm_Ntothist : False
   L2norm_M1hist : False
-  nflows_train : 1
+  nflows_train : 20
+  save_string : '_COND_FPMFOF'

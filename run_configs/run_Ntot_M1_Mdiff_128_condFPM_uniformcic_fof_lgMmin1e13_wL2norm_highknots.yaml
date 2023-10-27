@@ -36,7 +36,8 @@ sim_settings:
   lgMmin : 13.0
   lgMmax : 15.5
   rescale_sub : -0.5
-  Nmax : 4
+  # Nmax : 7
+  Nmax : 4  
   subsel_highM1 : True
   nsubsel : 512
   is_HR : True
@@ -49,7 +50,7 @@ network_settings:
   nflows_M1_NSF : 5
 
   K_Mdiff : 5
-  B_Mdiff : [0,1.0]
+  B_Mdiff : [0,0.8]
   nflows_Mdiff_NSF : 2
 
   # base_dist_Ntot : 'normal'
@@ -65,10 +66,10 @@ network_settings:
 train_settings:
   batch_size_DL : 16
   all_gpu : False
-  nepochs_Ntot_only : 3000
+  nepochs_Ntot_only : 4000
   nepochs_Ntot_M1_only : 4000
-  nepochs_all : 0
+  nepochs_all : 22000
   start_with_bestfit : False
   L2norm_Ntothist : False
   L2norm_M1hist : False
-  nflows_train : 1
+  nflows_train : 20

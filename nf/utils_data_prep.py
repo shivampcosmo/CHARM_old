@@ -64,8 +64,8 @@ def load_density_halo_data_NGP(
         sdir='/pscratch/sd/s/spandey/quijote/data_NGP_self',
         stype='cic',
         mass_type='fof',
-        lgMmincutstr = '5e13',
-        Mmin=14.0,
+        lgMmincutstr = '7e12',
+        Mmin=13.0,
         subsel_highM1=False,
         nsubsel=512,
         ind_subsel=None,
@@ -322,9 +322,15 @@ def prep_density_halo_cats(
     M_halos_all = df_Mh_all.reshape(
         (df_Mh_all.shape[0], df_Mh_all.shape[1] * df_Mh_all.shape[2] * df_Mh_all.shape[3], df_Mh_all.shape[4])
         )
+    if Nmax is None:
+        Nmax = int(np.amax(N_halos_all))
+    
+    N_halos_all = np.clip(N_halos_all, 0, Nmax)
 
     # Sort the halo mass in descending order
     M_halos_all_sort = np.flip(np.sort(M_halos_all, axis=-1), axis=-1)
+    M_halos_all_sort = M_halos_all_sort[...,:Nmax+1]    
+
     # Scale the halo masses to be between 0 and 1
     M_halos_all_sort_norm = rescaleM_sub + ((M_halos_all_sort - Mmin) / (Mmax - Mmin))
     # indices where M_halos_all_sort_norm is less than rescaleM_sub
@@ -361,8 +367,7 @@ def prep_density_halo_cats(
     # Now we create a mask for the halo masses. This is needed for the loss function
     M_diff_halos_all_norm_masked = M_diff_halos_all_norm * mask_M_diff
 
-    if Nmax is None:
-        Nmax = int(np.amax(N_halos_all))
+
     mu_all = np.arange(Nmax + 1) + 1
     sig_all = sigv * np.ones_like(mu_all)
     Nhalo_train_mg = sig_all[0] * np.random.randn(N_halos_all.shape[0], N_halos_all.shape[1]) + (N_halos_all) + 1
@@ -424,6 +429,10 @@ def prep_density_halo_cats_batched(
         # Now we reshape the number of halos into 2D array of shape number of sub-sim, nvoxels (per sub-sim)
         # Note that the number of sub-sim = nb**3
         N_halos_all = df_Nh.reshape((df_Nh.shape[0], df_Nh.shape[1] * df_Nh.shape[2] * df_Nh.shape[3]))
+        if Nmax is None:
+            Nmax = int(np.amax(N_halos_all))
+        N_halos_all = np.clip(N_halos_all, 0, Nmax)
+
         N_halos_all_comb.append(N_halos_all)
         # Do the same for the halo mass
         M_halos_all = df_Mh_all.reshape(
@@ -432,6 +441,7 @@ def prep_density_halo_cats_batched(
 
         # Sort the halo mass in descending order
         M_halos_all_sort = np.flip(np.sort(M_halos_all, axis=-1), axis=-1)
+        M_halos_all_sort = M_halos_all_sort[...,:Nmax+1]
         # Scale the halo masses to be between 0 and 1
         M_halos_all_sort_norm = rescaleM_sub + (M_halos_all_sort - Mmin) / (Mmax - Mmin)
         # indices where M_halos_all_sort_norm is less than rescaleM_sub
@@ -473,8 +483,7 @@ def prep_density_halo_cats_batched(
         # Now we create a mask for the halo masses. This is needed for the loss function
         M_diff_halos_all_norm_masked = (M_diff_halos_all_norm * mask_M_diff)
         M_diff_halos_all_norm_masked_all.append(M_diff_halos_all_norm_masked)
-        if Nmax is None:
-            Nmax = int(np.amax(N_halos_all))
+
         mu_all = np.arange(Nmax + 1) + 1
         sig_all = sigv * np.ones_like(mu_all)
         Nhalo_train_mg = sig_all[0] * np.random.randn(N_halos_all.shape[0], N_halos_all.shape[1]) + (N_halos_all) + 1

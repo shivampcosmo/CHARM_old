@@ -1,5 +1,4 @@
 import sys, os
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 # import pickle as pk
 import numpy as np
 import torch
@@ -28,10 +27,15 @@ from tqdm import tqdm
 import yaml
 
 run_config_name = sys.argv[1]
-# run_config_name = 'run_test_128_condQ_pylianscic_200c_lgMmin5e13.yaml'
+# run_config_name = 'run_test_128_condFPM_uniformcic_fof_lgMmin5e13_wL2norm_highknots.yaml'
+# run_config_name = 'run_Ntot_M1_Mdiff_128_condFPM_uniformcic_fof_lgMmin1e13_wL2norm_highknots.yaml'
+# run_config_name = 'LONGTRAIN_run_Ntot_M1_Mdiff_256_condFPMFOF_cic_200c_lgMmin7e12_Nmax4_nc4.yaml'
+# run_config_name = 'LONGTRAIN_run_Ntot_M1_Mdiff_256_condFPMFOF_cic_200c_lgMmin7e12_Nmax8_nc4.yaml'
 
 with open("/mnt/home/spandey/ceph/AR_NPE/run_configs/" + run_config_name,"r") as file_object:
     config=yaml.load(file_object,Loader=yaml.SafeLoader)
+
+
 
 
 config_sims = config['sim_settings']
@@ -132,8 +136,7 @@ else:
 
     
 
-
-
+    
 lgM_array = np.linspace(lgMmin, lgMmax, 1000)
 M_array = 10**lgM_array
 if '200c' in mass_type:
@@ -151,69 +154,46 @@ hmf_cdf = np.zeros_like(hmf_pdf)
 for i in range(len(hmf_cdf)):
     hmf_cdf[i] = sp.integrate.simps(hmf_pdf[:i+1], lgM_rescaled[:i+1])
 
+ndim_diff = return_dict_train['M_diff_halos_all_norm_masked'][0].shape[2]
+
+if return_dict_train_FP is not None:
+    cond_tensor = torch.Tensor(np.array(return_dict_train_FP['df_d_all']))
+    cond_nsh = np.moveaxis(np.array(return_dict_train_FP['df_d_all_nsh']), 2, 5)
+    cond_tensor_nsh = torch.Tensor((cond_nsh)).reshape(-1, nsims_per_batch * (nax_h ** 3), ninp)
+else:
+    cond_tensor = torch.Tensor(np.array(return_dict_train['df_d_all']))
+    cond_nsh = np.moveaxis(np.array(return_dict_train['df_d_all_nsh']), 2, 5)
+    cond_tensor_nsh = torch.Tensor((cond_nsh)).reshape(-1, nsims_per_batch * (nax_h ** 3), ninp)
+
+mask_tensor_M1_train = torch.Tensor(np.array(return_dict_train['mask_M1'])).reshape(-1, nsims_per_batch * (nax_h**3))
+mask_tensor_Mdiff_train = torch.Tensor((np.array(return_dict_train['mask_M_diff']))).reshape(-1, nsims_per_batch * (nax_h**3), ndim_diff)
+
+X_M1 = torch.Tensor((np.array(return_dict_train['M1_halos_all_norm']))).reshape(-1, nsims_per_batch * (nax_h**3), 1)
+X_Nhalo = torch.Tensor(np.array(return_dict_train['Nhalo_train_mg_arr'])).reshape(-1, nsims_per_batch * (nax_h**3), 1)
+X_Mdiff = torch.Tensor(np.array(return_dict_train['M_diff_halos_all_norm_masked'])).reshape(-1, nsims_per_batch * (nax_h**3),ndim_diff)
+Nhalos_truth_tensor = torch.Tensor(((np.array(return_dict_train['N_halos_all'])))).reshape(-1, nsims_per_batch * (nax_h**3), 1)
+
+if return_dict_train_FP is not None:
+    mask_tensor_M1_train_FP = torch.Tensor(np.array(return_dict_train_FP['mask_M1'])).reshape(-1, nsims_per_batch * (nax_h**3))
+    X_M1_FP = torch.Tensor((np.array(return_dict_train_FP['M1_halos_all_norm']))).reshape(-1, nsims_per_batch * (nax_h**3), 1)
+else:
+    mask_tensor_M1_train_FP = None
+    X_M1_FP = None
+
+    
+cond_tensor = cond_tensor.cuda(dev)
+cond_tensor_nsh = cond_tensor_nsh.cuda(dev)
+mask_tensor_M1_train = mask_tensor_M1_train.cuda(dev)
+mask_tensor_Mdiff_train = mask_tensor_Mdiff_train.cuda(dev)
+X_M1 = X_M1.cuda(dev)
+X_Nhalo = X_Nhalo.cuda(dev)
+X_Mdiff = X_Mdiff.cuda(dev)
 
 
-from torch.utils.data import DataLoader, Dataset
-class LoadCustomData(Dataset):
-    def __init__(self, return_dict, return_dict_FP, all_gpu=False):
-        if return_dict_FP is not None:
-            self.cond_tensor = torch.Tensor(np.array(return_dict_FP['df_d_all']))
-            cond_nsh = np.moveaxis(np.array(return_dict_FP['df_d_all_nsh']), 2, 5)
-            self.cond_tensor_nsh = torch.Tensor((cond_nsh)).reshape(-1, nsims_per_batch * (nax_h ** 3), ninp)
-        else:
-            self.cond_tensor = torch.Tensor(np.array(return_dict['df_d_all']))
-            cond_nsh = np.moveaxis(np.array(return_dict['df_d_all_nsh']), 2, 5)
-            self.cond_tensor_nsh = torch.Tensor((cond_nsh)).reshape(-1, nsims_per_batch * (nax_h ** 3), ninp)
-
-        ndim_diff = return_dict['M_diff_halos_all_norm_masked'][0].shape[2]
-        self.mask_tensor_M1_train = torch.Tensor(np.array(return_dict['mask_M1'])).reshape(-1, nsims_per_batch * (nax_h**3))
-        self.mask_tensor_Mdiff_train = torch.Tensor((np.array(return_dict['mask_M_diff']))).reshape(-1, nsims_per_batch * (nax_h**3), ndim_diff)
-
-        self.X_M1 = torch.Tensor((np.array(return_dict['M1_halos_all_norm']))).reshape(-1, nsims_per_batch * (nax_h**3), 1)
-        self.X_Nhalo = torch.Tensor(np.array(return_dict['Nhalo_train_mg_arr'])).reshape(-1, nsims_per_batch * (nax_h**3), 1)
-        self.X_Mdiff = torch.Tensor(np.array(return_dict['M_diff_halos_all_norm_masked'])).reshape(-1, nsims_per_batch * (nax_h**3),ndim_diff)
-        self.Nhalos_truth_tensor = torch.Tensor(((np.array(return_dict['N_halos_all'])))).reshape(-1, nsims_per_batch * (nax_h**3), 1)
-
-        if return_dict_FP is not None:
-            self.mask_tensor_M1_train_FP = torch.Tensor(np.array(return_dict_FP['mask_M1'])).reshape(-1, nsims_per_batch * (nax_h**3))
-            self.X_M1_FP = torch.Tensor((np.array(return_dict_FP['M1_halos_all_norm']))).reshape(-1, nsims_per_batch * (nax_h**3), 1)
-        else:
-            self.mask_tensor_M1_train_FP = None
-            self.X_M1_FP = None
-        if all_gpu:
-            self.cond_tensor = self.cond_tensor.cuda(dev)
-            self.cond_tensor_nsh = self.cond_tensor_nsh.cuda(dev)
-            self.mask_tensor_M1_train = self.mask_tensor_M1_train.cuda(dev)
-            self.mask_tensor_Mdiff_train = self.mask_tensor_Mdiff_train.cuda(dev)
-            self.X_M1 = self.X_M1.cuda(dev)
-            self.X_Nhalo = self.X_Nhalo.cuda(dev)
-            self.X_Mdiff = self.X_Mdiff.cuda(dev)
-            self.Nhalos_truth_tensor = self.Nhalos_truth_tensor.cuda(dev)
-            if return_dict_FP is not None:
-                self.mask_tensor_M1_train_FP = self.mask_tensor_M1_train_FP.cuda(dev)
-                self.X_M1_FP = self.X_M1_FP.cuda(dev)
-
-    def __len__(self):
-        return len(self.cond_tensor)
-
-    def __getitem__(self, idx):
-        cond_tensor = (self.cond_tensor[idx,...])
-        cond_tensor_nsh = self.cond_tensor_nsh[idx,...]
-        mask_tensor_M1_train = self.mask_tensor_M1_train[idx,...]
-        mask_tensor_Mdiff_train =self.mask_tensor_Mdiff_train[idx,...]
-        X_M1 = self.X_M1[idx,...]
-        X_Nhalo = self.X_Nhalo[idx,...]
-        X_Mdiff = self.X_Mdiff[idx,...]
-        Nhalos_truth_tensor = self.Nhalos_truth_tensor[idx,...]
-        if self.mask_tensor_M1_train_FP is not None:
-            mask_tensor_M1_train_FP = self.mask_tensor_M1_train_FP[idx,...]
-            X_M1_FP = self.X_M1_FP[idx,...]
-        else:
-            mask_tensor_M1_train_FP = torch.Tensor([-9999])
-            X_M1_FP = torch.Tensor([-9999])
-
-        return (cond_tensor, cond_tensor_nsh, mask_tensor_M1_train, mask_tensor_Mdiff_train, X_M1, X_Nhalo,
-                 X_Mdiff, Nhalos_truth_tensor, mask_tensor_M1_train_FP, X_M1_FP)
+Nhalos_truth_tensor = Nhalos_truth_tensor.cuda(dev)
+if return_dict_train_FP is not None:
+    mask_tensor_M1_train_FP = mask_tensor_M1_train_FP.cuda(dev)
+    X_M1_FP = X_M1_FP.cuda(dev)
 
 
 with open("/mnt/home/spandey/ceph/AR_NPE/run_configs/" + run_config_name,"r") as file_object:
@@ -235,12 +215,22 @@ except:
 
 nflows_train = config_train['nflows_train']
 
-save_bestfit_model_dir = '/mnt/home/spandey/ceph/AR_NPE/' + 'TRAIN_ROCKSTAR_FOF/LONGTRAIN_CLIPPED_FINALTEST_SUBSEL_Ntot_M1_Mdiff_plexp_ns_' + str(len(ji_array)) + \
-                            '_cond_sim_' + cond_sim  \
+# save_bestfit_model_dir = '/mnt/home/spandey/ceph/AR_NPE/' + 'TRAIN_ROCKSTAR_FOF/CLIPPED_FINALTEST_SUBSEL_Ntot_M1_Mdiff_plexp_ns_' + str(len(ji_array)) + \
+#                             '_cond_sim_' + cond_sim  \
+#                             + '_nc' + str(nc) + '_mass_' + mass_type + \
+#                             '_KM1_' + str(K_M1) + \
+#                             '_stype_' + stype + \
+#                             '_L2normNtothist_' + str(L2norm_Ntothist) + '_L2normM1hist_' + str(L2norm_M1hist) + '_TRY2'
+
+save_string = config_train['save_string']
+
+save_bestfit_model_dir = '/mnt/home/spandey/ceph/AR_NPE/' + 'TRAIN_ROCKSTAR_FOF/LONGTRAIN_4Mpc_CLIPPED_FINALTEST_SUBSEL_Ntot_M1_Mdiff_plexp_ns_' + str(len(ji_array)) + \
+                            '_cond_sim_' + cond_sim  + '_ns_' + str(ns_h) \
                             + '_nc' + str(nc) + '_mass_' + mass_type + \
                             '_KM1_' + str(K_M1) + \
                             '_stype_' + stype + \
-                            '_L2normNtothist_' + str(L2norm_Ntothist) + '_L2normM1hist_' + str(L2norm_M1hist) + '_ns_2048'
+                            '_L2normNtothist_' + str(L2norm_Ntothist) + '_L2normM1hist_' + str(L2norm_M1hist) + '_Nmax' + str(Nmax) + save_string
+
 
 print(save_bestfit_model_dir, os.path.exists(save_bestfit_model_dir))
 # make directory if it doesn't exist
@@ -253,10 +243,6 @@ nepochs_Ntot_only = config_train['nepochs_Ntot_only']
 nepochs_Ntot_M1_only = config_train['nepochs_Ntot_M1_only']
 nepochs_all = config_train['nepochs_all']
 
-dataset = LoadCustomData(return_dict_train, return_dict_train_FP, all_gpu=all_gpu)
-# dataloader = DataLoader(dataset, batch_size=batch_size, pin_memory=1 - all_gpu, num_workers=1)
-dataloader = DataLoader(dataset, batch_size=1, pin_memory=1 - all_gpu, num_workers=1)
-
 
 
 nepochs_array = [nepochs_Ntot_only, nepochs_Ntot_M1_only, nepochs_all]
@@ -264,12 +250,13 @@ train_Ntot_array = [1, 1, 1]
 train_M1_array = [0, 1, 1]
 train_Mdiff_array = [0, 0, 1]
 
-# train_Ntot_array = [1]
-# train_M1_array = [1]
-# train_Mdiff_array = [1]
+# nepochs_array = [nepochs_Ntot_M1_only, nepochs_all]
+# train_Ntot_array = [1, 1,]
+# train_M1_array = [1, 1]
+# train_Mdiff_array = [0, 1]
 
 for jf in range(nflows_train):
-# for jf in range(3,10):
+# for jf in range(0,2):
 # for jf in np.arange(7,16):   
 # for jf in np.arange(0,7):
     try:
@@ -352,7 +339,7 @@ for jf in range(nflows_train):
         loss_all_it = []
         loss_min = 1e20
         epoch_tot_counter = 0
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.25, patience=100, verbose=True, cooldown=100, min_lr=1e-8)
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.5, patience=200, verbose=True, cooldown=200, min_lr=1e-5)
 
 
 
@@ -367,7 +354,7 @@ for jf in range(nflows_train):
                 train_M1 = train_M1_array[jn]
                 train_Mdiff = train_Mdiff_array[jn]
 
-                # if jn > 0:
+                if jn > 0:
                 #     print('loading bestfit model')
                 #     bestfit_model = (torch.load(save_bestfit_model_name))
                 #     model.load_state_dict(bestfit_model['state_dict'])
@@ -376,38 +363,37 @@ for jf in range(nflows_train):
                 #     # loss_min = bestfit_model['loss_min']
                 #     loss = bestfit_model['loss']
                 #     lr = bestfit_model['lr']
-                #     for g in optimizer.param_groups:
-                #         g['lr'] = learning_rate
+                    for g in optimizer.param_groups:
+                        g['lr'] = learning_rate
 
-                for jt in tqdm(range(nepochs)):
-                    for jd in range(len(dataloader)):
+                for jt in (range(nepochs)):
+                    # for jd in range(len(dataloader)):
                         torch.cuda.empty_cache()
                         optimizer.zero_grad()
-                        # cond_tensor_jd, cond_tensor_nsh_jd, mask_tensor_M1_train_jd, mask_tensor_Mdiff_train_jd, X_M1_jd, \
-                        #     X_Nhalo_jd, X_Mdiff_jd, Nhalos_truth_tensor_jd, mask_tensor_M1_train_FP_jd, X_M1_FP_jd = cond_tensor, cond_tensor_nsh, mask_tensor_M1_train, mask_tensor_Mdiff_train, X_M1, \
-                        #             X_Nhalo, X_Mdiff, Nhalos_truth_tensor, mask_tensor_M1_train_FP, X_M1_FP
                         cond_tensor_jd, cond_tensor_nsh_jd, mask_tensor_M1_train_jd, mask_tensor_Mdiff_train_jd, X_M1_jd, \
-                                X_Nhalo_jd, X_Mdiff_jd, Nhalos_truth_tensor_jd, mask_tensor_M1_train_FP_jd, X_M1_FP_jd = next(iter(dataloader))
-
+                            X_Nhalo_jd, X_Mdiff_jd, Nhalos_truth_tensor_jd, mask_tensor_M1_train_FP_jd, X_M1_FP_jd = cond_tensor, cond_tensor_nsh, mask_tensor_M1_train, mask_tensor_Mdiff_train, X_M1, \
+                                    X_Nhalo, X_Mdiff, Nhalos_truth_tensor, mask_tensor_M1_train_FP, X_M1_FP
+                        # cond_tensor_jd, cond_tensor_nsh_jd, mask_tensor_M1_train_jd, mask_tensor_Mdiff_train_jd, X_M1_jd, \
+                        #         X_Nhalo_jd, X_Mdiff_jd, Nhalos_truth_tensor_jd, mask_tensor_M1_train_FP_jd, X_M1_FP_jd = next(iter(dataloader))
 
                         if cond_sim == 'quijote':               
                             mask_tensor_M1_train_FP_jd = None
                             X_M1_FP_jd = None
                         
                         torch.cuda.empty_cache()
-                        if 1-all_gpu:
-                            cond_tensor_jd = cond_tensor_jd.cuda(dev)
-                            cond_tensor_nsh_jd = cond_tensor_nsh_jd.cuda(dev)
-                            mask_tensor_M1_train_jd = mask_tensor_M1_train_jd.cuda(dev)
-                            mask_tensor_Mdiff_train_jd = mask_tensor_Mdiff_train_jd.cuda(dev)
-                            X_M1_jd = X_M1_jd.cuda(dev)
-                            X_Nhalo_jd = X_Nhalo_jd.cuda(dev)
-                            X_Mdiff_jd = X_Mdiff_jd.cuda(dev)
-                            Nhalos_truth_tensor_jd = Nhalos_truth_tensor_jd.cuda(dev)
-                            if mask_tensor_M1_train_FP_jd is not None:
-                                mask_tensor_M1_train_FP_jd = mask_tensor_M1_train_FP_jd.cuda(dev)
-                                X_M1_FP_jd = X_M1_FP_jd.cuda(dev)
-                            torch.cuda.empty_cache()
+                        # if 1-all_gpu:
+                        # cond_tensor_jd = cond_tensor_jd.cuda(dev)
+                        # cond_tensor_nsh_jd = cond_tensor_nsh_jd.cuda(dev)
+                        # mask_tensor_M1_train_jd = mask_tensor_M1_train_jd.cuda(dev)
+                        # mask_tensor_Mdiff_train_jd = mask_tensor_Mdiff_train_jd.cuda(dev)
+                        # X_M1_jd = X_M1_jd.cuda(dev)
+                        # X_Nhalo_jd = X_Nhalo_jd.cuda(dev)
+                        # X_Mdiff_jd = X_Mdiff_jd.cuda(dev)
+                        # Nhalos_truth_tensor_jd = Nhalos_truth_tensor_jd.cuda(dev)
+                        # if mask_tensor_M1_train_FP_jd is not None:
+                        #     mask_tensor_M1_train_FP_jd = mask_tensor_M1_train_FP_jd.cuda(dev)
+                        #     X_M1_FP_jd = X_M1_FP_jd.cuda(dev)
+                        # torch.cuda.empty_cache()
                                         
                         loss = model(
                             X_Mdiff_jd,
@@ -435,22 +421,22 @@ for jf in range(nflows_train):
 
                         loss.backward()
                         optimizer.step()
-                    scheduler.step(loss)
-                    epoch_tot_counter += 1
-                    if (np.mod(jt, int(nepochs / 50)) == 0) or (jt == nepochs - 1):
-                        if float(loss.cpu().detach().numpy()) < loss_min:
-                            loss_min = float(loss.cpu().detach().numpy())
-                            print('saving bf at:', ', with loss:', np.round(loss_min, 5), ', at epoch:', jt, 
-                                'learning rate:', optimizer.param_groups[0]['lr'], ', train_Ntot:', train_Ntot, 
-                                'train_M1:', train_M1, ', train_Mdiff:', train_Mdiff, ', epoch_tot_counter:', epoch_tot_counter)
-                            lr=optimizer.param_groups[0]['lr']
-                            # print(loss_min, lr)
-                            state = {'loss_min': loss_min, 'state_dict': model.state_dict(), 'optimizer': optimizer.state_dict(),
-                                    'scheduler': scheduler.state_dict(), 'loss':loss, 'lr':lr, 'epoch_tot_counter':epoch_tot_counter}
+                        scheduler.step(loss)
+                        epoch_tot_counter += 1
+                        if (np.mod(jt, int(nepochs / 200)) == 0) or (jt == nepochs - 1):
+                            if float(loss.cpu().detach().numpy()) < loss_min:
+                                loss_min = float(loss.cpu().detach().numpy())
+                                print('saving bf at:', ', with loss:', np.round(loss_min, 5), ', at epoch:', jt, 
+                                    'learning rate:', optimizer.param_groups[0]['lr'], ', train_Ntot:', train_Ntot, 
+                                    'train_M1:', train_M1, ', train_Mdiff:', train_Mdiff, ', epoch_tot_counter:', epoch_tot_counter)
+                                lr=optimizer.param_groups[0]['lr']
+                                # print(loss_min, lr)
+                                state = {'loss_min': loss_min, 'state_dict': model.state_dict(), 'optimizer': optimizer.state_dict(),
+                                        'scheduler': scheduler.state_dict(), 'loss':loss, 'lr':lr, 'epoch_tot_counter':epoch_tot_counter}
 
-                            torch.save(
-                                state, save_bestfit_model_name
-                                )
+                                torch.save(
+                                    state, save_bestfit_model_name
+                                    )
     except Exception as e:
         print(e)
         print('error in flow:', jf)

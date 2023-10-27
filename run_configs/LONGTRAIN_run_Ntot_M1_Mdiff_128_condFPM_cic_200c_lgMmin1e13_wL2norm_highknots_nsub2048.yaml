@@ -20,15 +20,15 @@ sim_settings:
   # resolution of the halo catalog:
   ns_h : 128
   # nsims per batch when training
-  nsims_per_batch : 512
+  nsims_per_batch : 1024
   # nbatches to use to train
-  nbatches_train : 1
+  nbatches_train : 2
   # what type of smoothing to use for density:
   # stype : 'uniform_cic'
   stype : 'cic'  
   # mass type of halos:
-  # mass_type : 'rockstar_200c'
-  mass_type : 'fof'  
+  mass_type : 'rockstar_200c'
+  # mass_type : 'fof'  
   # mass cut of halo catalog:
   # lgMmincutstr : '5e13'
   # lgMmin : 13.6989
@@ -36,9 +36,9 @@ sim_settings:
   lgMmin : 13.0
   lgMmax : 15.5
   rescale_sub : -0.5
-  Nmax : 4
+  Nmax : 7
   subsel_highM1 : True
-  nsubsel : 512
+  nsubsel : 2048
   is_HR : True
 
 network_settings:
@@ -49,7 +49,7 @@ network_settings:
   nflows_M1_NSF : 5
 
   K_Mdiff : 5
-  B_Mdiff : [0,1.0]
+  B_Mdiff : [0,0.8]
   nflows_Mdiff_NSF : 2
 
   # base_dist_Ntot : 'normal'
@@ -63,12 +63,12 @@ network_settings:
 
 
 train_settings:
-  batch_size_DL : 16
+  batch_size_DL : 1024
   all_gpu : False
-  nepochs_Ntot_only : 3000
-  nepochs_Ntot_M1_only : 4000
-  nepochs_all : 0
+  nepochs_Ntot_only : 6000
+  nepochs_Ntot_M1_only : 6000
+  nepochs_all : 28000
   start_with_bestfit : False
   L2norm_Ntothist : False
   L2norm_M1hist : False
-  nflows_train : 1
+  nflows_train : 20
