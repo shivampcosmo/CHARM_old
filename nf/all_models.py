@@ -58,6 +58,79 @@ class FCNN(nn.Module):
         return self.network(x)
 
 
+class BinaryMaskModel(nn.Module):
+    """
+    This function gets the mask for the halo field. That is conditional on the features, it predicts if the voxel has a halo or not
+    """
+
+    def __init__(self,
+            dim=1,
+            hidden_dim=8,
+            base_network=FCNN,
+            num_cond=0,
+        ):
+        super().__init__()
+        self.dim = dim
+        self.num_cond = num_cond
+
+        self.layer_init = base_network(self.num_cond, 1, hidden_dim)
+
+        if self.num_cond == 0:
+            self.reset_parameters()
+
+    def reset_parameters(self):
+        init.uniform_(self.initial_param, -math.sqrt(0.5), math.sqrt(0.5))
+
+    def forward(self, x, cond_inp=None):
+        out = self.layer_init(cond_inp)
+        loss = nn.BCEWithLogitsLoss(reduction='none')
+        lossv = loss(out.reshape(-1,1), x.reshape(-1, 1))
+        return lossv[:,0]
+
+    def inverse(self, cond_inp=None):
+        out = self.layer_init(cond_inp)
+        out = torch.sigmoid(out)
+        return out
+    
+class MultiClassMaskModel(nn.Module):
+    """
+    This function gets the number of halos in the voxels that have atleast one halo. That is conditional on the features, it predicts the number of halos in the voxel
+    """
+
+    def __init__(self,
+            dim=1,
+            hidden_dim=8,
+            base_network=FCNN,
+            num_cond=0,
+            num_classes=2
+        ):
+        super().__init__()
+        self.dim = dim
+        self.num_cond = num_cond
+        self.num_classes = num_classes
+
+        self.layer_init = base_network(self.num_cond, self.num_classes, hidden_dim)
+
+        if self.num_cond == 0:
+            self.reset_parameters()
+
+    def reset_parameters(self):
+        init.uniform_(self.initial_param, -math.sqrt(0.5), math.sqrt(0.5))
+
+    def forward(self, x, cond_inp=None):
+        out = self.layer_init(cond_inp)
+        loss = nn.CrossEntropyLoss(reduction='none')
+        # import pdb; pdb.set_trace()
+        lossv = loss(out, x[:,0].type(torch.long))
+        return lossv
+
+    def inverse(self, cond_inp=None, mask=None):
+        out = self.layer_init(cond_inp)
+        out = torch.softmax(out, dim=1)
+        out *= mask[:, 0]
+        return out
+
+
 class SumGaussModel(nn.Module):
     """
     This function is for the quantization of the halo field. That is it models the probability of 
@@ -245,6 +318,9 @@ class SumGaussModel(nn.Module):
     def sample(self, cond_inp=None, mask=None):
         x = self.inverse(cond_inp, mask)
         return x
+
+
+
 
 
 class NSF_M1_CNNcond(nn.Module):
@@ -679,13 +755,19 @@ class NSF_Mdiff_CNNcond(nn.Module):
                 W, H, D = torch.split(out, self.K, dim=1)
                 W, H = torch.softmax(W, dim=1), torch.softmax(H, dim=1)
                 # W, H = 2 * self.B * W, 2 * self.B * H
+                D = F.softplus(D)
                 if isinstance(self.B, float) or isinstance(self.B, int):
                     W, H = 2 * self.B * W, 2 * self.B * H
+                    z, ld = unconstrained_RQS(x, W, H, D, inverse=False, tail_bound=self.B)
                 else:
-                    W, H = (self.B[1] - self.B[0]) * W, (self.B[1] - self.B[0]) * H            
-
-                D = F.softplus(D)
-                z, ld = unconstrained_RQS(x, W, H, D, inverse=False, tail_bound=self.B)
+                    if isinstance(self.B[0], float) or isinstance(self.B[0], int):
+                        W, H = (self.B[1] - self.B[0]) * W, (self.B[1] - self.B[0]) * H  
+                        z, ld = unconstrained_RQS(x, W, H, D, inverse=False, tail_bound=self.B)         
+                    else:
+                        W, H = (self.B[jd][1] - self.B[jd][0]) * W, (self.B[jd][1] - self.B[jd][0]) * H
+                        z, ld = unconstrained_RQS(x, W, H, D, inverse=False, tail_bound=[self.B[jd][0], self.B[jd][1]])
+                
+                # z, ld = unconstrained_RQS(x, W, H, D, inverse=False, tail_bound=self.B)
                 log_det_all_jd += ld
                 x = z
 
@@ -795,14 +877,18 @@ class NSF_Mdiff_CNNcond(nn.Module):
                 z = torch.zeros_like(x)
                 W, H, D = torch.split(out, self.K, dim=1)
                 W, H = torch.softmax(W, dim=1), torch.softmax(H, dim=1)
+                D = F.softplus(D)
                 # W, H = 2 * self.B * W, 2 * self.B * H
                 if isinstance(self.B, float) or isinstance(self.B, int):
                     W, H = 2 * self.B * W, 2 * self.B * H
+                    z, ld = unconstrained_RQS(x, W, H, D, inverse=True, tail_bound=self.B)                    
                 else:
-                    W, H = (self.B[1] - self.B[0]) * W, (self.B[1] - self.B[0]) * H            
-
-                D = F.softplus(D)
-                z, ld = unconstrained_RQS(x, W, H, D, inverse=True, tail_bound=self.B)
+                    if isinstance(self.B[0], float) or isinstance(self.B[0], int):
+                        W, H = (self.B[1] - self.B[0]) * W, (self.B[1] - self.B[0]) * H    
+                        z, ld = unconstrained_RQS(x, W, H, D, inverse=True, tail_bound=self.B)        
+                    else:
+                        W, H = (self.B[jd][1] - self.B[jd][0]) * W, (self.B[jd][1] - self.B[jd][0]) * H
+                        z, ld = unconstrained_RQS(x, W, H, D, inverse=True, tail_bound=[self.B[jd][0], self.B[jd][1]])
                 log_det_all += ld
                 x = z
 
