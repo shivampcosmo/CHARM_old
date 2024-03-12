@@ -2,7 +2,7 @@ import sys, os
 import pickle as pk
 import numpy as np
 from scipy.ndimage import gaussian_filter
-
+from tqdm import tqdm
 
 # def load_density_halo_data(
 #         ji,
@@ -62,6 +62,7 @@ def load_density_halo_data_NGP(
         z_all,
         nside_h,
         sdir='/pscratch/sd/s/spandey/quijote/data_NGP_self',
+        z_inference='0',
         stype='cic',
         mass_type='fof',
         lgMmincutstr = '7e12',
@@ -73,15 +74,16 @@ def load_density_halo_data_NGP(
     ):
     # load the halo data
     # fname = sdir + '/' + str(ji) + '/halo_data_dict_' + str(nside_h) + '.pk'
-    for ji in range(len(ji_array)):
+    # for ji in tqdm(range(len(ji_array))):
+    for ji in tqdm(range(len(ji_array))):        
         jsim = ji_array[ji]
-        if 'fastpm' in sdir:
+        if ('fastpm' in sdir) or ('pmwd' in sdir):
             fname = sdir + '/' + str(jsim) + '/halos_subvol_res_' + str(nside_h) + '_z=' + str(0) + '.pk'
         else:
             if is_HR:
-                fname = sdir + '/' + str(jsim) + '/halos_HR_' + mass_type + '_lgMmincut_' + lgMmincutstr + '_subvol_res_' + str(nside_h) + '_z=' + str(0) + '.pk'
+                fname = sdir + '/' + str(jsim) + '/halos_HR_' + mass_type + '_lgMmincut_' + lgMmincutstr + '_subvol_res_' + str(nside_h) + '_z=' + z_inference + '.pk'
             else:
-                fname = sdir + '/' + str(jsim) + '/halos_' + mass_type + '_lgMmincut_' + lgMmincutstr + '_subvol_res_' + str(nside_h) + '_z=' + str(0) + '.pk'
+                fname = sdir + '/' + str(jsim) + '/halos_' + mass_type + '_lgMmincut_' + lgMmincutstr + '_subvol_res_' + str(nside_h) + '_z=' + z_inference + '.pk'
 
         # if 'fof' in mass_type:
         #     # try:
@@ -107,18 +109,19 @@ def load_density_halo_data_NGP(
             # stack along the first axis:
             df_Mh_all = np.concatenate((df_Mh_all, df_h['M_halos']), axis=0)
             df_Nh_all = np.concatenate((df_Nh_all, df_h['N_halos']), axis=0)
-
+        # print(df_Mh_all.shape, df_Nh_all.shape)
     # jsim = ji_array[0]
     # load the density data
-    if is_HR and 'fastpm' not in sdir:
+    if (is_HR not in sdir) and ('fastpm' not in sdir):
         df_load = pk.load(open(
-            sdir + '/' + str(ji_array[0]) + '/density_HR_subvol_m_res_' + str(nside_d) + '_z=' + str(0) + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(ncnn) + '.pk', 'rb')
+            sdir + '/' + str(ji_array[0]) + '/density_HR_subvol_m_res_' + str(nside_d) + '_z=' + z_inference + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(ncnn) + '.pk', 'rb')
             )
 
     else:
         df_load = pk.load(open(
-            sdir + '/' + str(ji_array[0]) + '/density_subvol_m_res_' + str(nside_d) + '_z=' + str(0) + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(ncnn) + '.pk', 'rb')
+            sdir + '/' + str(ji_array[0]) + '/density_subvol_m_res_' + str(nside_d) + '_z=' + z_inference + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(ncnn) + '.pk', 'rb')
             )
+    # print(df_load.keys())
     if stype == 'cic':
         df_d0 = df_load['density_cic_pad']
     if stype == 'uniform_cic':
@@ -127,12 +130,13 @@ def load_density_halo_data_NGP(
         df_d0 = df_load['density_ngp_pad']
     ji0_shape = df_d0.shape[0]
     df_d_all = np.zeros((len(ji_array)*ji0_shape, len(z_all), df_d0.shape[1], df_d0.shape[2], df_d0.shape[3]))
-    for ji in range(len(ji_array)):
+    for ji in tqdm(range(len(ji_array))):
         jsim = ji_array[ji]
         for iz, z in enumerate(z_all):
+            # print(jsim, z)
             # if z is a type of float, then it is a redshift:
             if isinstance(z, float) or isinstance(z, int):
-                if is_HR and 'fastpm' not in sdir:
+                if (is_HR not in sdir) and ('fastpm' not in sdir):
                     df_load = pk.load(open(
                         sdir + '/' + str(jsim) + '/density_HR_subvol_m_res_' + str(nside_d) + '_z=' + str(z) + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(ncnn) + '.pk', 'rb')
                         )
@@ -177,7 +181,7 @@ def load_density_halo_data_NGP(
                 
                 elif z[0] == 'M':
                     df_h = pk.load(open(
-                        sdir + '/' + str(jsim) + '/halos_subvol_m_res_' + str(nside_d) + '_z=' + str(0) + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(ncnn) + '.pk', 'rb')
+                        sdir + '/' + str(jsim) + '/halos_subvol_m_res_' + str(nside_d) + '_z=' + z_inference + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(ncnn) + '.pk', 'rb')
                         )
 
                     M_id = z[1]
@@ -198,11 +202,11 @@ def load_density_halo_data_NGP(
     # ji = ji_array[0]
     if is_HR and 'fastpm' not in sdir:
         df_load = pk.load(open(
-            sdir + '/' + str(ji_array[0]) + '/density_HR_subvol_m_res_' + str(nside_h) + '_z=' + str(0) + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(0) + '.pk', 'rb')
+            sdir + '/' + str(ji_array[0]) + '/density_HR_subvol_m_res_' + str(nside_h) + '_z=' + z_inference + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(0) + '.pk', 'rb')
             )
     else:
         df_load = pk.load(open(
-            sdir + '/' + str(ji_array[0]) + '/density_subvol_m_res_' + str(nside_h) + '_z=' + str(0) + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(0) + '.pk', 'rb')
+            sdir + '/' + str(ji_array[0]) + '/density_subvol_m_res_' + str(nside_h) + '_z=' + z_inference + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(0) + '.pk', 'rb')
             )
 
     if stype == 'cic':
@@ -217,7 +221,7 @@ def load_density_halo_data_NGP(
         jsim = ji_array[ji]
         for iz, z in enumerate(z_all):
             if isinstance(z, float) or isinstance(z, int):
-                if is_HR and 'fastpm' not in sdir:
+                if (is_HR not in sdir) and ('fastpm' not in sdir):
                     df_load = pk.load(open(
                         sdir + '/' + str(jsim) + '/density_HR_subvol_m_res_' + str(nside_h) + '_z=' + str(z) + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(0) + '.pk', 'rb')
                         )
@@ -260,7 +264,7 @@ def load_density_halo_data_NGP(
                     df_d_all_nsh[ji*ji0_shape:(ji+1)*ji0_shape, iz, ...] = density_smoothed - density_unsmoothed
                 elif z[0] == 'M':
                     df_h = pk.load(open(
-                        sdir + '/' + str(jsim) + '/halos_subvol_m_res_' + str(nside_h) + '_z=' + str(0) + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(0) + '.pk', 'rb')
+                        sdir + '/' + str(jsim) + '/halos_subvol_m_res_' + str(nside_h) + '_z=' + z_inference + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(0) + '.pk', 'rb')
                         )
 
                     M_id = z[1]

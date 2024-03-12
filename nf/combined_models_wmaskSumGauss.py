@@ -114,6 +114,9 @@ class COMBINED_Model(nn.Module):
         x_multiclass,
         cond_x=None,
         cond_x_nsh=None,
+        cond_cosmo=None,
+        indsel_Nhalo_gt1=None,
+        mask_Ntot_all=None,
         mask_Mdiff_truth_all=None,
         mask_M1_truth_all=None,
         Nhalos_truth_all=None,
@@ -145,17 +148,23 @@ class COMBINED_Model(nn.Module):
         for jb in range(nbatches):
             cond_out = self.conv_layers(cond_x[jb])
             cond_out = torch.cat((cond_out, cond_x_nsh[jb]), dim=1)
-
-            if self.sep_Binary_cond:
-                cond_out_Binary = self.cond_Binary_layer(cond_out)
-            else:
-                cond_out_Binary = cond_out
+            if cond_cosmo is not None:
+                cond_out = torch.cat((cond_out, cond_cosmo[jb]), dim=1)
 
             if train_binary:
-                if jb == 0:
-                    loss_binarymask = torch.mean(self.BinaryMask_model.forward(x_binary_mask[jb], cond_out_Binary))
+                if mask_Ntot_all is not None:
+                    mask_sel_Ntot = mask_Ntot_all[jb].to(device)            
                 else:
-                    loss_binarymask += torch.mean(self.BinaryMask_model.forward(x_binary_mask[jb], cond_out_Binary))
+                    mask_sel_Ntot = torch.arange(cond_out.shape[0]).to(device)
+                if self.sep_Binary_cond:
+                    cond_out_Binary = self.cond_Binary_layer(cond_out[mask_sel_Ntot])
+                else:
+                    cond_out_Binary = cond_out[mask_sel_Ntot]
+
+                if jb == 0:
+                    loss_binarymask = torch.mean(self.BinaryMask_model.forward(x_binary_mask[jb][mask_sel_Ntot], cond_out_Binary))
+                else:
+                    loss_binarymask += torch.mean(self.BinaryMask_model.forward(x_binary_mask[jb][mask_sel_Ntot], cond_out_Binary))
 
             #     Nhalos_truth = Nhalos_truth_all[jb].to(device)
             #     if reg_M1 or train_M1:   
@@ -178,7 +187,7 @@ class COMBINED_Model(nn.Module):
                     cond_out_MultiClass = self.cond_MultiClass_layer(cond_out[mask_sel_MultiClass])
                 else:
                     cond_out_MultiClass = cond_out[mask_sel_MultiClass]
-
+                # import pdb; pdb.set_trace()
                 if jb == 0:
                     loss_multiclass = torch.mean(self.MultiClass_model.forward(x_multiclass[jb][mask_sel_MultiClass], cond_out_MultiClass))
                 else:
@@ -187,6 +196,7 @@ class COMBINED_Model(nn.Module):
 
 
             if train_M1:
+                Nhalos_truth = Nhalos_truth_all[jb].to(device)
                 mask_sel_M1 = mask_M1_truth_all[jb].to(device)                      
                 cond_inp_M1 = torch.cat([Nhalos_truth, cond_out], dim=1)
                 if x_M1_FP is not None:
@@ -214,17 +224,23 @@ class COMBINED_Model(nn.Module):
                 # mask_sel_tensor1 = Nhalos_truth_all[jb][:,0] - 1.0
                 # mask_sel_tensor = torch.nn.ReLU(mask_sel_tensor1)
                 # mask_sel_Mdiff = mask_sel_tensor.nonzero().squeeze()
-                mask_sel_Mdiff = mask_Mdiff_truth_all[jb].to(device)
 
+
+                Nhalos_truth = Nhalos_truth_all[jb].to(device)
+                # indsel_Nhalos = 
+                mask_sel_Mdiff = indsel_Nhalo_gt1[jb].to(device)
+                # mask_Mdiff_truth = mask_Mdiff_truth_all[jb].to('cuda')
+                # import pdb; pdb.set_trace()
                 cond_inp_Mdiff = torch.cat([Nhalos_truth, M1_truth, cond_out], dim=1)
                 if self.sep_Mdiff_cond:
                     cond_inp_Mdiff = self.cond_Mdiff_layer(cond_inp_Mdiff[mask_sel_Mdiff])
                 else:
                     cond_inp_Mdiff = cond_inp_Mdiff[mask_sel_Mdiff]
+                # import pdb; pdb.set_trace()
                 if jb == 0:
-                    loss_Mdiff = torch.mean(-self.Mdiff_model.forward(x_Mdiff[jb][mask_sel_M1], cond_inp_Mdiff, mask_Mdiff_truth))
+                    loss_Mdiff = torch.mean(-self.Mdiff_model.forward(x_Mdiff[jb][mask_sel_Mdiff], cond_inp_Mdiff, mask_Mdiff_truth_all[jb][mask_sel_Mdiff]))
                 else:
-                    loss_Mdiff += torch.mean(-self.Mdiff_model.forward(x_Mdiff[jb][mask_sel_M1], cond_inp_Mdiff, mask_Mdiff_truth))
+                    loss_Mdiff += torch.mean(-self.Mdiff_model.forward(x_Mdiff[jb][mask_sel_Mdiff], cond_inp_Mdiff, mask_Mdiff_truth_all[jb][mask_sel_Mdiff]))
         loss = (loss_binarymask + loss_multiclass + loss_M1 + loss_Mdiff)
         return loss
 
@@ -232,6 +248,7 @@ class COMBINED_Model(nn.Module):
         self,
         cond_x=None,
         cond_x_nsh=None,
+        cond_cosmo=None,
         use_truth_Nhalo=False,
         use_truth_M1=False,
         use_truth_Mdiff=False,
@@ -259,19 +276,26 @@ class COMBINED_Model(nn.Module):
         for jb in range(nbatches):
             cond_out = self.conv_layers(cond_x[jb])
             cond_out = torch.cat((cond_out, cond_x_nsh[jb]), dim=1)
+            if cond_cosmo is not None:
+                cond_out = torch.cat((cond_out, cond_cosmo[jb]), dim=1)
 
             if self.sep_Binary_cond:
                 cond_out_Binary = self.cond_Binary_layer(cond_out)
             else:
                 cond_out_Binary = cond_out
 
-            Ntot_samp = torch.zeros(len(cond_x[jb]))
+            Ntot_samp = torch.zeros(cond_out.shape[0])
             # print(cond_out_Ntot.shape)
             if train_binary:
-                binary_mask_tensor = self.BinaryMask_model.inverse(cond_out_Binary)
+                # binary_mask_tensor = self.BinaryMask_model.inverse(cond_out_Binary) - 1
+                # binary_mask_tensor_out = torch.zeros_like(binary_mask_tensor)
+                # ind_gt_0p5 = torch.where(binary_mask_tensor >= 0.5)
+                # binary_mask_tensor_out[ind_gt_0p5] = 1
+                binary_mask_tensor = self.BinaryMask_model.inverse(cond_out_Binary) - 1
                 binary_mask_tensor_out = torch.zeros_like(binary_mask_tensor)
                 ind_gt_0p5 = torch.where(binary_mask_tensor >= 0.5)
                 binary_mask_tensor_out[ind_gt_0p5] = 1
+
                 # Ntot_samp = np.maximum(np.round(Ntot_samp_tensor.cpu().detach().numpy()) - 1, 0).astype(int)
             else:
                 # Ntot_samp = torch.Tensor(Nhalos_truth)
@@ -281,18 +305,22 @@ class COMBINED_Model(nn.Module):
                 binary_mask_tensor_out[ind_gt] = 1
                 
 
-            mask_sel_MultiClass = torch.where(binary_mask_tensor_out > 0)
+            # mask_sel_MultiClass = torch.where(binary_mask_tensor_out > 0)
+            mask_sel_MultiClass = torch.where(binary_mask_tensor_out > 0)[0]
             if self.sep_MultiClass_cond:
                 cond_out_MultiClass = self.cond_MultiClass_layer(cond_out[mask_sel_MultiClass])
             else:
                 cond_out_MultiClass = cond_out[mask_sel_MultiClass]
 
             if train_multi:
-                multi_samp_tensor = (self.MultiClass_model.inverse(cond_out_MultiClass) + 1).to(torch.int)
+                multi_samp_tensor = (self.MultiClass_model.inverse(cond_out_MultiClass))
+                multi_samp_tensor = torch.maximum(torch.round(multi_samp_tensor), torch.Tensor([0]).to(device)).detach().cpu()
+                # import pdb; pdb.set_trace()
                 Ntot_samp[mask_sel_MultiClass] = multi_samp_tensor
             else:
                 Ntot_samp = torch.Tensor(Nhalos_truth)
 
+            Ntot_samp = Ntot_samp.cpu().detach().numpy()
                 # Ntot_samp = Nhalos_truth.cpu().detach().numpy()
             Ntot_samp_out.append(Ntot_samp)
             # nvox_batch = 64 // 8
@@ -336,7 +364,7 @@ class COMBINED_Model(nn.Module):
             mask_tensor_M1_samp_out.append(mask_tensor_M1_samp)
             # print(mask_tensor_M1_samp.shape, mask_samp_M1.shape, mask_samp_all.shape)
             if use_truth_Mdiff:
-                mask_tensor_Mdiff_samp = (mask_Mdiff_truth[jb,...])
+                mask_tensor_Mdiff_samp = (mask_Mdiff_truth[jb])
             else:
                 # mask_tensor_Mdiff_samp = torch.Tensor(np.copy(mask_samp))
                 mask_tensor_Mdiff_samp = torch.from_numpy(mask_samp_M_diff)
@@ -346,7 +374,7 @@ class COMBINED_Model(nn.Module):
             if use_truth_Nhalo:
                 Nhalo_conditional = Nhalos_truth[jb, ...]
             else:
-                if train_Ntot:
+                if train_multi:
                     Nhalo_conditional = torch.Tensor(np.array([Ntot_samp]).T)
                     Nhalo_conditional = Nhalo_conditional.float().cuda()
                 else:

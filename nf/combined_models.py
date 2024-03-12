@@ -146,9 +146,9 @@ class COMBINED_Model(nn.Module):
 
             if train_Ntot:
                 if jb == 0:
-                    loss_Ntot = -self.Ntot_model.forward(x_Ntot[jb], cond_out_Ntot)
+                    loss_Ntot = self.Ntot_model.forward(x_Ntot[jb], cond_out_Ntot)
                 else:
-                    loss_Ntot += -self.Ntot_model.forward(x_Ntot[jb], cond_out_Ntot)
+                    loss_Ntot += self.Ntot_model.forward(x_Ntot[jb], cond_out_Ntot)
 
                 if use_Ntot_samples or L2norm_Ntothist:
                     Ntot_samp_tensor = self.Ntot_model.inverse(cond_out_Ntot)
