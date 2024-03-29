@@ -112,6 +112,7 @@ class COMBINED_Model(nn.Module):
         x_M1,
         x_binary_mask,
         x_multiclass,
+        LOCAL_BIASING=False,
         cond_x=None,
         cond_x_nsh=None,
         cond_cosmo=None,
@@ -146,8 +147,11 @@ class COMBINED_Model(nn.Module):
         M1_L2_loss_tot = torch.zeros(1, device=device)
         Ntot_L2_loss_tot = torch.zeros(1, device=device)
         for jb in range(nbatches):
-            cond_out = self.conv_layers(cond_x[jb])
-            cond_out = torch.cat((cond_out, cond_x_nsh[jb]), dim=1)
+            if LOCAL_BIASING:
+                cond_out = cond_x_nsh[jb]
+            else:
+                cond_out = self.conv_layers(cond_x[jb])
+                cond_out = torch.cat((cond_out, cond_x_nsh[jb]), dim=1)
             if cond_cosmo is not None:
                 cond_out = torch.cat((cond_out, cond_cosmo[jb]), dim=1)
 
@@ -246,6 +250,7 @@ class COMBINED_Model(nn.Module):
 
     def inverse(
         self,
+        LOCAL_BIASING=False,
         cond_x=None,
         cond_x_nsh=None,
         cond_cosmo=None,
@@ -274,8 +279,11 @@ class COMBINED_Model(nn.Module):
         mask_tensor_M1_samp_out, mask_tensor_Mdiff_samp_out = [], []
         cond_inp_M1_out = []
         for jb in range(nbatches):
-            cond_out = self.conv_layers(cond_x[jb])
-            cond_out = torch.cat((cond_out, cond_x_nsh[jb]), dim=1)
+            if LOCAL_BIASING:
+                cond_out = cond_x_nsh[jb]
+            else:
+                cond_out = self.conv_layers(cond_x[jb])
+                cond_out = torch.cat((cond_out, cond_x_nsh[jb]), dim=1)
             if cond_cosmo is not None:
                 cond_out = torch.cat((cond_out, cond_cosmo[jb]), dim=1)
 

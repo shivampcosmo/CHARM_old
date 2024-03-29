@@ -184,6 +184,7 @@ class SumGaussModel(nn.Module):
         init.uniform_(self.initial_param, -math.sqrt(0.5), math.sqrt(0.5))
 
     def forward(self, x, cond_inp=None):
+        dev = x.device
         out = self.layer_init(cond_inp)
         if (self.mu_all is None) or (self.sig_all is None):
             mu_all, alpha_all, pw_all = (
@@ -203,7 +204,7 @@ class SumGaussModel(nn.Module):
                     )
             logP = torch.log(Li_all)
         else:
-            mu_all, var_all = self.mu_all, self.var_all
+            mu_all, var_all = self.mu_all.to(dev), self.var_all.to(dev)
             if self.base_dist == 'normal':
                 pw_all_inp = self.layer_init(cond_inp)
             elif self.base_dist == 'pl_exp':
@@ -221,7 +222,7 @@ class SumGaussModel(nn.Module):
                 # bt = 5*(1 + nn.Tanh()(bt))                
                 # we first predict the base distirbution given the alpha and beta of the form mu**alpha * exp(-beta*mu)
                 base_pws = torch.zeros(x.shape[0], self.ngauss)
-                base_pws = base_pws.to(device)
+                base_pws = base_pws.to(dev)
                 for i in range(self.ngauss):
                     base_pws[:, i] = torch.pow(mu_all[i], al) * torch.exp(-bt * mu_all[i])
                 pw_all_inp = torch.mul(pw_all_orig, base_pws)
@@ -232,7 +233,7 @@ class SumGaussModel(nn.Module):
             pw_all = nn.Softmax(dim=1)(pw_all_inp)
             # pw_all = nn.Softmax(dim=1)(torch.log(pw_all_inp))
             Li_all = torch.zeros(x.shape[0])
-            Li_all = Li_all.to(device)
+            Li_all = Li_all.to(dev)
             for i in range(self.ngauss):
                 Li_all += (
                     pw_all[:, i] * (1 / torch.sqrt(2 * np.pi * var_all[i])) *
@@ -448,6 +449,7 @@ class NSF_M1_CNNcond(nn.Module):
             return mu_all, var_all, pw_all
 
     def forward(self, x, cond_inp=None):
+        dev = x.device
         if self.base_dist in ["gauss", "halfgauss"]:
             if self.ngauss == 1:
                 mu, var = self.get_gauss_func_mu_alpha(cond_inp)
@@ -521,7 +523,10 @@ class NSF_M1_CNNcond(nn.Module):
             # use the interpolation function to get the logp
             # add another axis to x
             # import pdb; pdb.set_trace()
-            logp = (interpolate(x[None,:], self.lgM_rs_tointerp, self.hmf_pdf_tointerp))[0,:]
+            lgM_rs_tointerp = self.lgM_rs_tointerp.to(dev)
+            hmf_pdf_tointerp = self.hmf_pdf_tointerp.to(dev)
+            logp = (interpolate(x[None,:], lgM_rs_tointerp, hmf_pdf_tointerp))[0,:]
+            logp = logp.to(dev)
             # import pdb; pdb.set_trace()
             logp[torch.isnan(logp) | torch.isinf(logp)] = -100
 

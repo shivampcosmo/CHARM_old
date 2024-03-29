@@ -112,7 +112,7 @@ def load_density_halo_data_NGP(
         # print(df_Mh_all.shape, df_Nh_all.shape)
     # jsim = ji_array[0]
     # load the density data
-    if (is_HR not in sdir) and ('fastpm' not in sdir):
+    if (is_HR) and ('fastpm' not in sdir):
         df_load = pk.load(open(
             sdir + '/' + str(ji_array[0]) + '/density_HR_subvol_m_res_' + str(nside_d) + '_z=' + z_inference + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(ncnn) + '.pk', 'rb')
             )
@@ -136,7 +136,7 @@ def load_density_halo_data_NGP(
             # print(jsim, z)
             # if z is a type of float, then it is a redshift:
             if isinstance(z, float) or isinstance(z, int):
-                if (is_HR not in sdir) and ('fastpm' not in sdir):
+                if (is_HR) and ('fastpm' not in sdir):
                     df_load = pk.load(open(
                         sdir + '/' + str(jsim) + '/density_HR_subvol_m_res_' + str(nside_d) + '_z=' + str(z) + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(ncnn) + '.pk', 'rb')
                         )
@@ -221,7 +221,7 @@ def load_density_halo_data_NGP(
         jsim = ji_array[ji]
         for iz, z in enumerate(z_all):
             if isinstance(z, float) or isinstance(z, int):
-                if (is_HR not in sdir) and ('fastpm' not in sdir):
+                if (is_HR) and ('fastpm' not in sdir):
                     df_load = pk.load(open(
                         sdir + '/' + str(jsim) + '/density_HR_subvol_m_res_' + str(nside_h) + '_z=' + str(z) + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(0) + '.pk', 'rb')
                         )

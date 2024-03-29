@@ -38,7 +38,10 @@ def get_subvol_selection(df_Mh_all, df_Nh_all, nsubsel=None, ind_subsel=None, su
 
 def get_density_vals(sdir_cosmo, jsim, indsel_subvol, nvox_per_dim, nside_d, nbatch, nfilter, ncnn, z_all, stype, nsubvol_per_ji, is_HR, Mmin):
     # jsim = ji_array[ji]
-    return_mat = np.zeros((len(indsel_subvol), len(z_all), nvox_per_dim, nvox_per_dim, nvox_per_dim))
+    if any('v' in str(string) for string in z_all):
+        return_mat = np.zeros((len(indsel_subvol), len(z_all)+2, nvox_per_dim, nvox_per_dim, nvox_per_dim))
+    else:
+        return_mat = np.zeros((len(indsel_subvol), len(z_all), nvox_per_dim, nvox_per_dim, nvox_per_dim))
     for iz, z in enumerate(z_all):
         # print(jsim, z)
         # if z is a type of float, then it is a redshift:
@@ -126,6 +129,16 @@ def get_density_vals(sdir_cosmo, jsim, indsel_subvol, nvox_per_dim, nside_d, nba
                 Mcond_iz = df_h['M' + str(M_id) + '_halos_pad'][indsel_subvol,...]
                 Mcond_iz = (Mcond_iz - Mmin)/Mmin
                 return_mat[:, iz, ...] = Mcond_iz
+
+            elif z[0] == 'v':
+                z_REDSHIFT = float(z.split('_')[1])
+                if z_REDSHIFT == 0.0:
+                    z_REDSHIFT = 0
+
+                df_load = pk.load(open(
+                    sdir_cosmo + '/' + str(jsim) + '/velocity_HR_subvol_m_res_' + str(nside_d) + '_z=' + str(z_REDSHIFT) + '_nbatch_' + str(nbatch) + '_nfilter_' + str(nfilter) + '_ncnn_' + str(ncnn) + '.pk', 'rb')
+                    )
+                return_mat[:, iz:iz+3, ...] = df_load['velocity_cic_pad'][indsel_subvol,...]
 
     return return_mat
 
@@ -243,7 +256,10 @@ def load_density_halo_data_NGP(
     if stype == 'ngp':
         df_d0 = df_load['density_ngp_pad']
     ji0_shape = nsubvol_per_ji
-    df_d_all = np.zeros((len(ji_array)*ji0_shape + nsubvol_fid, len(z_all), df_d0.shape[1], df_d0.shape[2], df_d0.shape[3]))
+    if any('v' in str(string) for string in z_all):
+        df_d_all = np.zeros((len(ji_array)*ji0_shape + nsubvol_fid, len(z_all)+2, df_d0.shape[1], df_d0.shape[2], df_d0.shape[3]))
+    else:
+        df_d_all = np.zeros((len(ji_array)*ji0_shape + nsubvol_fid, len(z_all), df_d0.shape[1], df_d0.shape[2], df_d0.shape[3]))
     for ji in tqdm(range(len(ji_array))):
         jsim = ji_array[ji]
         df_d_all[ji*ji0_shape:(ji+1)*ji0_shape, ...] = get_density_vals(sdir_cosmo, jsim, indsubsel_all[jsim], df_d0.shape[1], nside_d, nbatch, nfilter, ncnn, z_all, stype, nsubvol_per_ji, is_HR, Mmin)
@@ -268,7 +284,10 @@ def load_density_halo_data_NGP(
     if stype == 'ngp':
         df_d0 = df_load['density_ngp_pad']    
     ji0_shape = nsubvol_per_ji
-    df_d_all_nsh = np.zeros((len(ji_array)*ji0_shape + nsubvol_fid, len(z_all), df_d0.shape[1], df_d0.shape[2], df_d0.shape[3]))
+    if any('v' in str(string) for string in z_all):
+        df_d_all_nsh = np.zeros((len(ji_array)*ji0_shape + nsubvol_fid, len(z_all)+2, df_d0.shape[1], df_d0.shape[2], df_d0.shape[3]))
+    else:
+        df_d_all_nsh = np.zeros((len(ji_array)*ji0_shape + nsubvol_fid, len(z_all), df_d0.shape[1], df_d0.shape[2], df_d0.shape[3]))
     for ji in range(len(ji_array)):
         jsim = ji_array[ji]
         df_d_all_nsh[ji*ji0_shape:(ji+1)*ji0_shape, ...] = get_density_vals(sdir_cosmo, jsim, indsubsel_all[jsim], df_d0.shape[1], nside_h, nbatch, nfilter, 0, z_all, stype, nsubvol_per_ji, is_HR, Mmin)
