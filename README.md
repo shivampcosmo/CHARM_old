@@ -1,4 +1,3 @@
-# AR_NPE
-Auto-regressive model of neural physical engine
-updated
+# CHARM
+Creating Halos with Auto-regressive Multi-stage networks
 
