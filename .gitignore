@@ -5,6 +5,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+slurm_logs/
+data/
+model_checkpoints/
+arxiv/
 # C extensions
 *.so
 
