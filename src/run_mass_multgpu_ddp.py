@@ -3,8 +3,10 @@ import torch
 import torch.distributed as dist
 import yaml
 from torch.nn.parallel import DistributedDataParallel as DDP
-# set environment variable:
+import time
 os.environ['TORCH_DISTRIBUTED_DEBUG'] = 'DETAIL'
+# os.environ['NCCL_BLOCKING_WAIT'] = '0'
+from datetime import timedelta
 import torch
 import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -136,10 +138,12 @@ learning_rate = config_net['learning_rate']
 K_M1 = config_net['K_M1']
 B_M1 = config_net['B_M1']
 nflows_M1_NSF = config_net['nflows_M1_NSF']
+add_Ntot_cond_for_M1 = config_net['add_Ntot_cond_for_M1']
 
 K_Mdiff = config_net['K_Mdiff']
 B_Mdiff = config_net['B_Mdiff']
 nflows_Mdiff_NSF = config_net['nflows_Mdiff_NSF']
+add_Ntot_M1_cond_for_Mdiff = config_net['add_Ntot_M1_cond_for_Mdiff']
 
 base_dist_Ntot = config_net['base_dist_Ntot']
 if base_dist_Ntot == 'None':
@@ -309,7 +313,7 @@ from dataclasses import dataclass
     # block_size = 32 # what is the maximum context length for predictions?
 max_iters = 8000
 eval_interval = 10
-learning_rate = 2e-3
+learning_rate = 5e-4
 sdir_model_checkpoint = abs_path_checkpoint + '/test0/'
 # make directory if does not exist:
 try:
@@ -367,7 +371,8 @@ def run_func():
     ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
     ctx = torch.amp.autocast(device_type=device_type, dtype=ptdtype)
 
-    dist.init_process_group("nccl")
+    # dist.init_process_group("nccl", timeout=timedelta(seconds=7200000))
+    dist.init_process_group("nccl")    
     rank = dist.get_rank()
     # print(f"Start running basic DDP example on rank {rank}.")
 
@@ -447,7 +452,6 @@ def run_func():
     # if rank == 0: print(f"Transferred test data to GPU", flush=True)        
 
     num_cond_Ntot = num_cond
-
     model_BinaryMask = SumGaussModel(
         hidden_dim=hidden_dim_MAF,
         num_cond=num_cond_Ntot,
@@ -469,9 +473,10 @@ def run_func():
         device=device_id
         )
 
-
-    num_cond_M1 = num_cond + 1
-
+    if add_Ntot_cond_for_M1:
+        num_cond_M1 = num_cond + 1
+    else:
+        num_cond_M1 = num_cond
     model_M1 = NSF_1var_CNNcond(
         K=K_M1,
         B=B_M1,
@@ -487,7 +492,11 @@ def run_func():
         )
 
     ndim_diff = return_dict_train['M_diff_halos_all_norm_masked'].shape[-1]
-    num_cond_Mdiff = num_cond + 2
+
+    if add_Ntot_M1_cond_for_Mdiff:
+        num_cond_Mdiff = num_cond + 2
+    else:
+        num_cond_Mdiff = num_cond
     model_Mdiff = NSF_Autoreg_CNNcond(
         dim=ndim_diff,
         K=K_Mdiff,
@@ -504,7 +513,6 @@ def run_func():
     model = COMBINED_Model(
         None,
         model_Mdiff,
-        # None,
         model_M1,
         model_BinaryMask,
         model_multiclass,
@@ -529,24 +537,66 @@ def run_func():
         num_cond_Mdiff = num_cond_Mdiff
         ).to(device_id)
 
+    # model = torch.compile(model)
+
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
     scaler = torch.cuda.amp.GradScaler(enabled=(dtype == 'float16'))
 
-    try:
-        checkpoint = torch.load(sdir_model_checkpoint + f'test_model_bestfit_650.pth', map_location=device_id)
-        model.load_state_dict(checkpoint['state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer'])
-    except:
-        pass
+    # try:
+    # optimizer.load_state_dict(checkpoint['optimizer'])
+    # except:
+    #     num_iter_load = 0
+    #     pass
+
 
     model = DDP(model, device_ids=[device_id], find_unused_parameters=True)
+    # model = DDP(model, device_ids=[device_id]) 
+
+    # if 1:   
+    # #     loss_fn(model(inputs)).backward()
+    #     jp = 0
+    #     for p in model.parameters():
+    #         print(jp, p)
+    #         jp += 1
+    #     if p.grad is None:
+    #         print("found unused param")
+
+
+    iter_num = 0
+    loss_min = 1e20
+
+    # num_iter_load = 0
+    num_iter_load = 5964
+    # # checkpoint = torch.load(sdir_model_checkpoint + f'test1_model_bestfit_1599.pth', map_location=device_id)
+    checkpoint = torch.load(sdir_model_checkpoint + f'test_model_bestfit_{num_iter_load}.pth', map_location=f'cuda:{device_id}')        
+    model.load_state_dict(checkpoint['state_dict'])
+
+
+    # train_binary_all = [1,1,1]
+    # train_multi_all = [1,1,1]
+    # train_M1_all = [0,1,1]
+    # train_Mdiff_all = [0,0,1]
+    # nepochs_all = [1600,1600,2400]
+
+    # train_binary_all = [1,1]
+    # train_multi_all = [1,1]
+    # train_M1_all = [1,1]
+    # train_Mdiff_all = [0,1]
+    # nepochs_all = [1600,1600]
+
+    train_binary_all = [1]
+    train_multi_all = [1]
+    train_M1_all = [1]
+    train_Mdiff_all = [1]
+    nepochs_all = [4200]
+
 
     decay_lr = True # whether to decay the learning rate
     decay_lr_model = 'cosine'
-    warmup_iters = 500 # how many steps to warm up for
-    lr_decay_iters = 7500 # should be ~= max_iters per Chinchilla
-    min_lr = 1e-4 # minimum learning rate, should be ~= learning_rate/10 per Chinchilla
+    warmup_iters = int(nepochs_all[0]//15) # how many steps to warm up for
+    lr_decay_iters = int(nepochs_all[0]*1.5) # should be ~= max_iters per Chinchilla
+    min_lr = 1e-6 # minimum learning rate, should be ~= learning_rate/10 per Chinchilla
     # learning rate decay scheduler (cosine with warmup)
     def get_lr(it, model='cosine'):
         # 1) linear warmup for warmup_iters steps
@@ -571,22 +621,7 @@ def run_func():
         elif model == 'constant':
             return learning_rate
 
-    iter_num = 0
-    local_iter_num = 0 # number of iterations in the lifetime of this process
-    raw_model = model.module
-    running_mfu = -1.0    
-    best_val_loss = 1e20
-    loss_min = 1e20
-    nbatches = 10
-    max_iters = 8000
-    eval_interval = 20
-    save_separate_interval = 20
 
-    train_binary_all = [1]
-    train_multi_all = [1]
-    train_M1_all = [1]
-    train_Mdiff_all = [1]
-    nepochs_all = [8000]
 
 
     for js in (range(len(train_binary_all))):
@@ -599,7 +634,7 @@ def run_func():
         train_Mdiff = train_Mdiff_all[js]
         nepochs = nepochs_all[js]
 
-        t0 = time.time()
+        # t0 = time.time()
         for iter_num in (range(nepochs)):
             lr = get_lr(iter_num, model=decay_lr_model) if decay_lr else learning_rate
             for param_group in optimizer.param_groups:
@@ -629,6 +664,7 @@ def run_func():
 
 
             if (np.mod(iter_num, int(nepochs / 80)) == 0) or (iter_num == nepochs - 1):
+                # 
                 if float(loss.mean().cpu().detach().numpy()) < loss_min:
                     loss_min = float(loss.mean().cpu().detach().numpy())
                     print(loss_min)
@@ -636,7 +672,8 @@ def run_func():
                     state = {'loss_min': loss_min, 'state_dict': model.state_dict(), 'optimizer': optimizer.state_dict(),
                              'loss':loss}
 
-                    save_bestfit_model_name = sdir_model_checkpoint + 'test_model_bestfit_' + str(iter_num) + '.pth'
+                    # save_bestfit_model_name = sdir_model_checkpoint + 'test2_model_bestfit_' + str(iter_num + js*nepochs) + '.pth'
+                    save_bestfit_model_name = sdir_model_checkpoint + 'test_model_bestfit_' + str(iter_num + num_iter_load) + '.pth'                    
                     torch.save(
                         state, save_bestfit_model_name
                         )

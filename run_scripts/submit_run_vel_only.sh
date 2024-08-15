@@ -2,9 +2,9 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-gpu=12
-#SBATCH --time=6:00:00
-#SBATCH --job-name=test2_mass
-#SBATCH -p gpuxl
+#SBATCH --time=8:00:00
+#SBATCH --job-name=test2_vel
+#SBATCH -p gpu
 #SBATCH -C h100
 #SBATCH --mem=1000G
 #SBATCH --gpus-per-node=4
@@ -28,8 +28,6 @@ source ~/miniconda3/bin/activate ili-sbi
 
 master_node=$SLURMD_NODENAME
 
-export TORCH_DISTRIBUTED_DEBUG=DETAIL
-export NCCL_BLOCKING_WAIT=0
 cd /mnt/home/spandey/ceph/CHARM/src/
 srun python `which torchrun` \
         --nnodes $SLURM_JOB_NUM_NODES \
@@ -37,5 +35,5 @@ srun python `which torchrun` \
         --rdzv_id $SLURM_JOB_ID \
         --rdzv_backend c10d \
         --rdzv_endpoint $master_node:29500 \
-        run_mass_multgpu_ddp.py
+        run_vel_multgpu_ddp.py
 echo "done"

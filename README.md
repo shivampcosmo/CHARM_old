@@ -1,3 +1,3 @@
 # CHARM
-Creating Halos with Auto-regressive Multi-stage networks
+Creating Halos with Auto-Regressive Multi-stage networks
 
